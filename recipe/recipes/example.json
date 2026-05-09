@@ -1,0 +1,29 @@
+{
+    "name": "pixel_7_pro",
+    "device": {
+        "width": 1080,
+        "height": 2400
+    },
+    "ui": {
+        "match_button": {
+            "template": "templates/match_btn.png",
+            "roi": [400, 1800, 280, 80],
+            "threshold": 0.85
+        },
+        "scramble_area": {
+            "template": "templates/scramble_area.png",
+            "roi": [50, 400, 980, 300],
+            "threshold": 0.80
+        },
+        "result_screen": {
+            "template": "templates/result.png",
+            "roi": null,
+            "threshold": 0.85
+        },
+        "connected_icon": {
+            "template": "templates/connected.png",
+            "roi": [0, 0, 200, 100],
+            "threshold": 0.90
+        }
+    }
+}
