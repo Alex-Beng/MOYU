@@ -14,7 +14,7 @@ esp32c3用于ble模拟智能魔方，安卓手机用于启动cube station，电�
 
 | state | description |
 |----------|-------------|
-| wait_init ｜ 等待手机与esp连接；电脑与esp及手机连接 ｜
+| wait_init | 等待手机与esp连接；电脑与esp及手机连接 |
 | init | 检测UI状态，开启匹配，等待打乱UI出现 |
 | scramble | 打乱，直至打乱UI消失 |
 | solve | 电脑求解并下发转动，等待打乱UI出现 or 结算UI|
@@ -47,7 +47,7 @@ moyu/
 │   └── detector.py        # 状态机各阶段 UI 检测逻辑
 ├── ocr/
 │   ├── segmentor.py       # 圆形轮廓检测 + 字符分割
-│   ├── classifier.py      # KNN/模板匹配分类（字符集 RUFDBL'2）
+│   ├── classifier.py      # KNN/模板匹配/分类（字符集 RUFDBL'2）
 │   ├── trainer.py         # 训练数据收集 & 模型训练入口
 │   └── parser.py          # 原始识别结果 → 标准 move 序列
 ├── device/
