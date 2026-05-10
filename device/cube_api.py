@@ -119,9 +119,12 @@ class CubeAPI:
         try:
             async with self._session.request(method, url, **kwargs) as resp:
                 resp.raise_for_status()
-                # /api/facelets 返回纯文本，其他返回 JSON
-                if path == "/api/facelets":
-                    return await resp.text()
+                # ESP32 返回纯文本的路径
+                if path in ("/api/facelets", "/api/move", "/api/moves"):
+                    text = await resp.text()
+                    if path == "/api/facelets":
+                        return text
+                    return {"ok": True, "response": text.strip()}
                 return await resp.json()
         except aiohttp.ClientError as e:
             logger.warning("请求失败 %s %s: %s", method, url, e)

@@ -11,6 +11,7 @@ from ocr.classifier import LABELS
 logger = logging.getLogger(__name__)
 
 _VALID_LABELS = set(LABELS)
+_EMPTY_LABELS = {"EMPTY", "?"}
 
 
 def parse(raw_labels: list[str]) -> str:
@@ -25,9 +26,9 @@ def parse(raw_labels: list[str]) -> str:
     """
     valid = []
     for label in raw_labels:
-        if label in _VALID_LABELS:
+        if label in _VALID_LABELS and label not in _EMPTY_LABELS:
             valid.append(label)
-        else:
+        elif label not in _EMPTY_LABELS:
             logger.warning("过滤无效标签: %r", label)
     return " ".join(valid)
 

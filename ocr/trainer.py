@@ -236,7 +236,6 @@ def train_cnn(data_dir: str, model_output: str):
             return x
 
     # 构建数据
-    # features 是展平的二值图，reshape 回 (N, 1, H, W)
     h, w = CHAR_SIZE[1], CHAR_SIZE[0]
     x = torch.tensor(features.reshape(-1, 1, h, w) / 255.0, dtype=torch.float32)
     y = torch.tensor(labels, dtype=torch.long)
@@ -245,16 +244,22 @@ def train_cnn(data_dir: str, model_output: str):
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-    # 训练
-    model.train()
-    for epoch in range(20):
+    def accuracy(output, target):
+        pred = output.argmax(dim=1)
+        return (pred == target).float().mean().item()
+
+    print(f"{'Epoch':>6}  {'Loss':>8}  {'Acc':>8}")
+    print("-" * 24)
+
+    for epoch in range(50):
+        model.train()
         optimizer.zero_grad()
         output = model(x)
         loss = criterion(output, y)
         loss.backward()
         optimizer.step()
-        if epoch % 5 == 0:
-            logger.info("Epoch %d, Loss: %.4f", epoch, loss.item())
+        acc = accuracy(output, y)
+        print(f"{epoch:6d}  {loss.item():8.4f}  {acc:8.3f}")
 
     # 导出 ONNX
     model.eval()

@@ -1,1 +1,6 @@
 .codeflicker
+__pycache__
+.cfop_cache.pkl
+/data
+*.pkl
+*.onnx

@@ -18,27 +18,32 @@ class ScrcpyClient:
     对于自动化场景，max_fps=5 即可大幅降低 CPU 占用。
     """
 
-    def __init__(self, serial: str | None = None, max_fps: int = 5, max_width: int = 1080):
+    def __init__(self, serial: str | None = None, max_fps: int = 5, max_width: int = 1080, bitrate: int | None = None):
         """
         Args:
             serial: adb 设备序列号，None 时自动选择唯一连接设备。
             max_fps: 最大帧率，自动化场景 5fps 足够。
-            max_width: 最大分辨率宽度。
+            max_width: 最大分辨率宽度，0 表示不限制。
+            bitrate: 视频码率 (bps)，None 使用 scrcpy 默认值。
         """
         self.serial = serial
         self.max_fps = max_fps
         self.max_width = max_width
+        self.bitrate = bitrate
         self._client: scrcpy.Client | None = None
         self._connected = False
 
     def connect(self):
         """建立 scrcpy 连接并启动帧循环。"""
         logger.info("ScrcpyClient 连接中，serial=%s", self.serial)
-        self._client = scrcpy.Client(
+        kwargs = dict(
             device=self.serial,
             max_fps=self.max_fps,
             max_width=self.max_width,
         )
+        if self.bitrate is not None:
+            kwargs["bitrate"] = self.bitrate
+        self._client = scrcpy.Client(**kwargs)
         # 注册帧回调（可选，主要用于调试可视化）
         self._client.add_listener(scrcpy.EVENT_FRAME, self._on_frame)
         self._client.add_listener(scrcpy.EVENT_INIT, self._on_init)

@@ -5,6 +5,7 @@ Recipe 只负责描述 UI 特征（怎么检测），不负责流程控制。
 结构：
 {
     "name": "设备名称",
+    "mode": "full",
     "device": { "width": 1080, "height": 2400 },
     "ui": {
         "match_button": {
@@ -68,14 +69,15 @@ class Recipe:
     """完整 recipe：纯配置，不含流程逻辑。"""
     name: str
     device: DeviceConfig
+    mode: str = "full"                              # "full" | "semi" 运行模式
     ui: dict[str, UIFeature] = field(default_factory=dict)
-    base_dir: Path = field(default_factory=Path)  # recipe 文件目录，解析模板图相对路径
+    base_dir: Path = field(default_factory=Path)    # recipe 文件目录，解析模板图相对路径
 
     @classmethod
     def from_dict(cls, d: dict, base_dir: Path) -> "Recipe":
         device = DeviceConfig.from_dict(d["device"])
         ui = {k: UIFeature.from_dict(v) for k, v in d.get("ui", {}).items()}
-        return cls(name=d["name"], device=device, ui=ui, base_dir=base_dir)
+        return cls(name=d["name"], device=device, mode=d.get("mode", "full"), ui=ui, base_dir=base_dir)
 
     def feature(self, name: str) -> UIFeature | None:
         """按名称获取 UI 特征配置。"""

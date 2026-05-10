@@ -127,9 +127,10 @@ class ScreenLoop:
 
 
 if __name__ == "__main__":
-    """单独测试：python -m vision.screen_loop [image_or_video]
+    """单独测试：python -m vision.screen_loop [image_or_video|device]
 
-    无参数：自动在测试帧上打印帧尺寸（无 scrcpy）
+    无参数：接入真实手机 scrcpy 串流，按 q 退出
+    传 device:<serial>：指定 adb 序列号，如 device:192.168.1.5:5555
     传图片：python -m vision.screen_loop screen.png
     传视频：python -m vision.screen_loop test.mp4
     """
@@ -138,32 +139,46 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     async def _test():
-        path = sys.argv[1] if len(sys.argv) > 1 else None
+        arg = sys.argv[1] if len(sys.argv) > 1 else None
         queue: asyncio.Queue = asyncio.Queue()
 
-        if path is None:
-            print("无参数，使用纯黑静态帧（1080x1920）验证 ScreenLoop 流程")
-            import numpy as np
-            class StaticSource(FrameSource):
-                async def frames(self):
-                    for _ in range(3):
-                        yield np.zeros((1920, 1080, 3), dtype=np.uint8)
-                        await asyncio.sleep(0.1)
-            source = StaticSource()
-        elif path.endswith((".mp4", ".avi", ".mov")):
-            source = VideoSource(path)
+        if arg is None or arg.startswith("device:"):
+            serial = arg.split(":", 1)[1] if arg else None
+            from device.scrcpy_client import ScrcpyClient
+            client = ScrcpyClient(serial=serial, max_fps=60)
+            client.connect()
+            source = ScrcpySource(client, fps=60)
+            print(f"已连接 scrcpy，serial={serial or '自动'}，按 q 退出")
+            try:
+                count = 0
+                async for frame in source.frames():
+                    cv2.imshow("scrcpy", frame)
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord("q"):
+                        break
+                    count += 1
+                    print(f"\r帧 {count}: shape={frame.shape}", end="", flush=True)
+            finally:
+                client.disconnect()
+                cv2.destroyAllWindows()
+                print("\nScreenLoop 测试完成")
+            return
+
+        if arg.endswith((".mp4", ".avi", ".mov")):
+            source = VideoSource(arg)
         else:
-            source = ImageSource(path)
+            source = ImageSource(arg)
 
-        loop = ScreenLoop(source, recipe=None, ui_event_queue=queue)
-
-        # 只跑 3 帧就退出（通过 asyncio.timeout 控制）
         count = 0
         async for frame in source.frames():
+            cv2.imshow("preview", frame)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
             print(f"帧 {count}: shape={frame.shape}")
             count += 1
-            if count >= 3:
+            if count >= 10:
                 break
+        cv2.destroyAllWindows()
         print("ScreenLoop 测试完成")
 
     asyncio.run(_test())
