@@ -1,32 +1,28 @@
 """Recipe JSON schema 定义与校验
 
-Recipe 只负责描述 UI 特征（怎么检测），不负责流程控制。
+Recipe 包含 UI 特征定义和赛事模式，Controller 根据 mode 选择控制策略。
+
+模式说明：
+    semi   半自动：人类操作 UI，AI 只负责 scramble OCR + solve
+    rank   排位赛：全自动，init(begin_rank) → scramble → solve → end_rank → re_rank
+    holder 守擂赛：预留
+    team   组队赛：预留
 
 结构：
 {
     "name": "设备名称",
-    "mode": "full",
+    "mode": "rank",
     "device": { "width": 1080, "height": 2400 },
     "ui": {
-        "match_button": {
-            "template": "templates/match_btn.png",
+        "begin_rank": {
+            "template": "templates/begin_rank.png",
             "roi": [100, 200, 300, 80],
-            "threshold": 0.85
-        },
-        "scramble_text": {
-            "template": "templates/scramble_area.png",
-            "roi": [50, 400, 800, 200],
-            "threshold": 0.80
-        },
-        "result_screen": {
-            "template": "templates/result.png",
-            "roi": null,
             "threshold": 0.85
         }
     }
 }
 
-- ui 的 key 是特征名称（如 "match_button"），由 Controller 代码引用
+- ui 的 key 是特征名称，由 Controller 代码引用
 - Controller 决定在哪个状态检测哪些特征、检测到后做什么动作、转移到哪
 - Recipe 是纯配置，不含任何流程逻辑
 """
@@ -42,6 +38,7 @@ class UIFeature:
     template: str                                       # 模板图相对路径
     roi: tuple[int, int, int, int] | None = None       # (x, y, w, h)，null=全图
     threshold: float = 0.85                             # 匹配阈值
+    desc: str = ""                                      # 描述文字
 
     @classmethod
     def from_dict(cls, d: dict) -> "UIFeature":
@@ -50,6 +47,7 @@ class UIFeature:
             template=d["template"],
             roi=roi,
             threshold=d.get("threshold", 0.85),
+            desc=d.get("desc", ""),
         )
 
 
@@ -69,7 +67,7 @@ class Recipe:
     """完整 recipe：纯配置，不含流程逻辑。"""
     name: str
     device: DeviceConfig
-    mode: str = "full"                              # "full" | "semi" 运行模式
+    mode: str = "semi"                              # "semi" | "rank" | "holder" | "team"
     ui: dict[str, UIFeature] = field(default_factory=dict)
     base_dir: Path = field(default_factory=Path)    # recipe 文件目录，解析模板图相对路径
 
@@ -77,7 +75,7 @@ class Recipe:
     def from_dict(cls, d: dict, base_dir: Path) -> "Recipe":
         device = DeviceConfig.from_dict(d["device"])
         ui = {k: UIFeature.from_dict(v) for k, v in d.get("ui", {}).items()}
-        return cls(name=d["name"], device=device, mode=d.get("mode", "full"), ui=ui, base_dir=base_dir)
+        return cls(name=d["name"], device=device, mode=d.get("mode", "semi"), ui=ui, base_dir=base_dir)
 
     def feature(self, name: str) -> UIFeature | None:
         """按名称获取 UI 特征配置。"""
@@ -96,6 +94,8 @@ def validate(d: dict):
     dev = d["device"]
     if "width" not in dev or "height" not in dev:
         raise ValueError("device 必须包含 width 和 height")
+    if d.get("mode") not in (None, "semi", "rank", "holder", "team"):
+        raise ValueError(f"不支持的 mode: {d.get('mode')}")
     for feat_name, feat in d.get("ui", {}).items():
         if "template" not in feat:
             raise ValueError(f"ui.{feat_name} 缺少 template")

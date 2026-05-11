@@ -1,6 +1,21 @@
-"""主控制器 —— 基于 asyncio + create_task 的并发架构"""
+"""主控制器 —— 编排各独立任务
+
+运行模式（由 recipe.mode 控制）：
+    semi   半自动：人类操作 UI，AI 只负责 scramble OCR + solve
+    rank   排位赛：init(begin_rank) → scramble(segment循环) → solve → end_rank → re_rank → scramble
+    holder 守擂赛：预留
+    team   组队赛：预留
+
+各任务模块是独立类，有自己的 run() 入口，可单独测试：
+    - ScreenLoop : 持续截图 / UI 检测
+    - CubeLoop   : 魔方状态轮询 / 转动下发
+
+任务通过 asyncio.Queue 通信，Controller 只负责组装 & 启动。
+"""
 import asyncio
 import logging
+import time
+from pathlib import Path
 
 from recipe.loader import RecipeLoader
 from vision.screen_loop import ScreenLoop, ScrcpySource
@@ -13,63 +28,57 @@ from ocr.classifier import create_classifier
 from ocr.parser import parse
 from solve import solve_cfop
 
+import cv2
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 
 class Controller:
-    """主控制器 —— 编排各独立任务
-
-    两种运行模式（由 recipe.mode 控制）：
-        full  全自动：wait_init → init → scramble → solve → reinit → init
-        semi  半自动：scramble → solve → scramble  (UI 操作由人类完成)
-
-    各任务模块是独立类，有自己的 run() 入口，可单独测试：
-        - ScreenLoop : 持续截图 / UI 检测
-        - CubeLoop   : 魔方状态轮询 / 转动下发
-
-    任务通过 asyncio.Queue 通信，Controller 只负责组装 & 启动。
-    """
+    """主控制器 —— 编排各独立任务"""
 
     def __init__(self, classifier_config: dict | None = None):
         self.recipe = RecipeLoader()
-        self.scrcpy = ScrcpyClient()
+        self.scrcpy = ScrcpyClient(max_width=0, bitrate=200_000_000)
         self.cube = CubeAPI()
         self.detector = Detector(self.recipe.recipe)
 
-        # 分类器配置（OCR 识别用）
         self.classifier_config = classifier_config or {"type": "knn"}
-        self.classifier = None  # 延迟初始化
+        self.classifier = None
 
-        # 任务间通信队列
         self.ui_event_queue: asyncio.Queue = asyncio.Queue()
         self.cube_event_queue: asyncio.Queue = asyncio.Queue()
         self.move_queue: asyncio.Queue = asyncio.Queue()
 
-        # 独立任务实例
         self.screen_loop = ScreenLoop(ScrcpySource(self.scrcpy), self.recipe, self.ui_event_queue)
         self.cube_loop = CubeLoop(self.cube, self.cube_event_queue, self.move_queue)
 
-        # 运行模式: "full" 全自动 / "semi" 半自动
         self.mode: str = self.recipe.recipe.mode
-        self.state: str = "scramble" if self.mode == "semi" else "wait_init"
+        self._scramble_seen_move = False
         self._running = False
+        self._init_state()
         logger.info("Controller 初始化, mode=%s, state=%s", self.mode, self.state)
+
+    def _init_state(self):
+        if self.mode == "semi":
+            self.state = "scramble"
+        elif self.mode == "rank":
+            self.state = "init"
+        else:
+            self.state = "wait_init"
 
     # ------------------------------------------------------------------
     # 入口
     # ------------------------------------------------------------------
 
     async def run(self):
-        """启动所有任务并等待它们运行。"""
-        # 初始化设备连接
+        """启动所有任务。"""
         self.scrcpy.connect()
         await self.cube.open()
 
-        # 延迟初始化分类器（OCR 用）
         if self.classifier_config:
             self.classifier = create_classifier(self.classifier_config)
 
-        # 启动后台任务
         tasks = [
             asyncio.create_task(self._state_machine(), name="state_machine"),
             asyncio.create_task(self.screen_loop.run(), name="screen_loop"),
@@ -88,265 +97,280 @@ class Controller:
     # ------------------------------------------------------------------
 
     async def _state_machine(self):
-        """根据 recipe.mode 加载对应状态处理器，驱动状态转移。"""
-        if self.mode == "semi":
-            _handlers = {
-                "scramble": self._handle_scramble,
-                "solve":    self._handle_solve,
-            }
-        else:
-            _handlers = {
-                "wait_init": self._handle_wait_init,
-                "init":      self._handle_init,
-                "scramble":  self._handle_scramble,
-                "solve":     self._handle_solve,
-                "reinit":    self._handle_reinit,
-            }
+        """根据 mode 加载对应状态处理器。"""
+        handlers = _get_handlers(self.mode)
         while True:
-            handler = _handlers.get(self.state)
+            if len(handlers) == 0:
+                await asyncio.sleep(1)
+                continue
+            handler = handlers.get(self.state)
             if handler:
-                next_state = await handler()
+                next_state = await handler(self)
                 if next_state and next_state != self.state:
-                    logger.info("状态转移: %s → %s", self.state, next_state)
+                    logger.info("状态转移: %s -> %s", self.state, next_state)
                     self.state = next_state
             else:
-                logger.warning("未知状态: %s", self.state)
+                logger.warning("未知状态: %s (mode=%s)", self.state, self.mode)
                 await asyncio.sleep(1)
 
     # ------------------------------------------------------------------
-    # 状态处理协程
+    # 工具方法
     # ------------------------------------------------------------------
 
-    async def _wait_for_ui(self, feature_name: str, timeout: float = 30.0) -> bool:
-        """等待指定 UI 特征出现。
+    async def _wait_for_ui(self, feature_name: str, timeout: float = 30.0) -> tuple[bool, any, any]:
+        """轮询检测 UI 特征直到出现或超时。"""
+        elapsed = 0.0
+        last_log = 0.0
+        while elapsed < timeout:
+            frame = self.scrcpy.last_frame
+            if frame is not None:
+                matched, center = self.detector.detect(frame, feature_name)
+                if matched:
+                    return True, frame, center
+                if elapsed - last_log >= 2.0:
+                    logger.debug("init: 帧可用 (%dx%d)，未检测到 %s", frame.shape[1], frame.shape[0], feature_name)
+                    last_log = elapsed
+            else:
+                if elapsed - last_log >= 2.0:
+                    logger.debug("init: 等待 scrcpy 首帧...")
+                    last_log = elapsed
+            await asyncio.sleep(0.5)
+            elapsed += 0.5
+        return False, self.scrcpy.last_frame, None
 
-        Args:
-            feature_name: recipe 中的特征名称
-            timeout: 超时时间（秒）
-
-        Returns:
-            True if 特征出现，False if 超时
-        """
-        try:
-            while timeout > 0:
-                # 尝试从队列获取 UI 事件（带超时）
-                event = await asyncio.wait_for(self.ui_event_queue.get(), timeout=1.0)
-                self.ui_event_queue.task_done()
-                # TODO: 解析 event，判断是否为目标特征
-                # if event.get("feature") == feature_name:
-                #     return True
-                timeout -= 1.0
-        except asyncio.TimeoutError:
-            pass
-        return False
-
-    async def _wait_for_cube_state(self, key: str, expected, timeout: float = 30.0) -> bool:
-        """等待魔方状态满足条件。
-
-        Args:
-            key: 状态字段名（如 "connected"）
-            expected: 期望值
-            timeout: 超时时间
-
-        Returns:
-            True if 状态满足，False if 超时
-        """
-        try:
-            while timeout > 0:
-                event = await asyncio.wait_for(self.cube_event_queue.get(), timeout=1.0)
-                self.cube_event_queue.task_done()
-                if event.get(key) == expected:
-                    return True
-                timeout -= 1.0
-        except asyncio.TimeoutError:
-            pass
-        return False
-
-    async def _handle_wait_init(self) -> str:
-        """等待手机与 ESP 连接、电脑与设备连接。
-
-        条件：
-            - cube_event_queue 中收到 connected=True
-        """
-        logger.info("等待设备连接...")
-        connected = await self._wait_for_cube_state("connected", True, timeout=60.0)
-        if connected:
-            logger.info("设备已连接，进入 init 状态")
-            return "init"
-        else:
-            logger.warning("设备连接超时，保持 wait_init")
-            return "wait_init"
-
-    async def _handle_init(self) -> str:
-        """检测 UI 状态，开启匹配，等待打乱 UI 出现。
-
-        步骤：
-            1. 点击 "match_button" 特征位置（如果有）
-            2. 等待 "scramble_area" 特征出现
-        """
-        logger.info("init: 等待打乱 UI 出现...")
-
-        # 可选：点击匹配按钮（如果 recipe 中有定义）
-        matched, center = self.detector.detect(self.scrcpy.last_frame, "match_button")
-        if matched and center:
-            logger.info("init: 点击匹配按钮 %s", center)
-            self.scrcpy.tap(*center)
-            await asyncio.sleep(1.0)
-
-        # 等待打乱区域 UI 出现
-        # TODO: 实际需要从 screen_loop 的帧中检测
-        # 这里简化：等待 5 秒后进入 scramble（实际应检测特征）
-        await asyncio.sleep(5.0)
-        logger.info("init: 检测到打乱 UI，进入 scramble")
-        return "scramble"
-
-    async def _handle_scramble(self) -> str:
-        """OCR 识别打乱序列，下发到 ESP32，等待打乱 UI 消失。
-
-        步骤：
-            1. 截取打乱区域（scramble_area ROI）
-            2. segmentor 检测圆形气泡 → 裁剪字符图
-            3. classifier 识别每个字符
-            4. parser 转换为标准 move 序列
-            5. 下发打乱序列到 ESP32（同步魔方状态）
-            6. 等待打乱 UI 消失（进入 solve）
-        """
-        logger.info("scramble: OCR 识别打乱序列...")
-
+    async def _click_feature(self, feature_name: str) -> bool:
+        """检测并点击特征。"""
         frame = self.scrcpy.last_frame
         if frame is None:
-            logger.warning("scramble: 无帧，跳过")
-            await asyncio.sleep(1.0)
-            return "scramble"
+            return False
+        matched, center = self.detector.detect(frame, feature_name)
+        if matched and center:
+            logger.info("点击 %s @ (%d, %d)", feature_name, *center)
+            self.scrcpy.tap(*center)
+            return True
+        return False
 
-        # 检测打乱区域是否还在画面中
-        feat = self.recipe.recipe.feature("scramble_area")
-        matched, _ = self.detector.detect(frame, "scramble_area")
-        if not matched:
-            logger.info("scramble: 打乱区域未检测到，可能已消失")
-            await asyncio.sleep(1.0)
+
+# ======================================================================
+# Semi 模式：人类操作 UI，AI 只负责 scramble OCR + solve
+# ======================================================================
+
+async def _semi_scramble(self: Controller) -> str:
+    """OCR 识别打乱序列，下发 ESP32，等待打乱 UI 消失后进入 solve。"""
+    logger.info("semi/scramble: OCR 识别打乱序列...")
+    frame = self.scrcpy.last_frame
+    if frame is None:
+        await asyncio.sleep(0.5)
+        return "scramble"
+
+    feat = self.recipe.recipe.feature("scramble_area")
+    if feat and feat.roi:
+        x, y, w, h = feat.roi
+        crop = frame[y:y+h, x:x+w]
+    else:
+        crop = frame
+
+    chars = segment(crop)
+    if chars and self.classifier:
+        char_imgs = [c[0] for c in chars]
+        labels = self.classifier.predict_batch(char_imgs)
+        moves = parse(labels)
+        if moves:
+            logger.info("scramble: 识别=%s", moves)
+            await self.move_queue.put(moves)
+
+    await asyncio.sleep(5.0)
+
+    frame = self.scrcpy.last_frame
+    if frame and self.detector:
+        still_there, _ = self.detector.detect(frame, "scramble_area")
+        if not still_there:
+            logger.info("scramble: UI 消失，进入 solve")
             return "solve"
+    return "scramble"
 
-        if feat and feat.roi:
-            x, y, w, h = feat.roi
-            scramble_frame = frame[y:y+h, x:x+w]
-        else:
-            scramble_frame = frame
 
-        chars = segment(scramble_frame)
-        if chars:
-            char_imgs = [c[0] for c in chars]
-            if self.classifier:
-                labels = self.classifier.predict_batch(char_imgs)
-                moves = parse(labels)
-                logger.info("scramble: 识别结果 = %s", moves)
+async def _semi_solve(self: Controller) -> str:
+    """获取面片 → CFOP 求解 → 下发转动 → 回到 scramble。"""
+    logger.info("semi/solve: 求解...")
+    facelets = await self.cube.get_facelets()
+    if not facelets or len(facelets) != 54:
+        return "scramble"
 
-                if moves:
-                    # 下发打乱序列到 ESP32，同步魔方状态
-                    logger.info("scramble: 下发打乱序列到 ESP32")
-                    await self.move_queue.put(moves)
-            else:
-                logger.warning("scramble: 分类器未初始化")
-        else:
-            logger.warning("scramble: 未检测到字符区域")
-
-        await asyncio.sleep(1.0)
-
-        # 再次检测打乱区域是否消失
-        frame = self.scrcpy.last_frame
-        if frame:
-            matched, _ = self.detector.detect(frame, "scramble_area")
-            if not matched:
-                logger.info("scramble: 打乱 UI 消失，进入 solve")
-                return "solve"
-
-        if self.mode == "semi":
-            # 半自动：打乱区还在说明人类还在操作，保持 scramble
-            logger.info("scramble: 打乱 UI 仍在，等待人类完成操作...")
-            return "scramble"
-        else:
-            # 全自动：检查是否已进入结算 UI
-            matched_result, _ = self.detector.detect(frame, "result_screen")
-            if matched_result:
-                logger.info("scramble: 检测到结算 UI，进入 reinit")
-                return "reinit"
-            return "solve"
-
-    async def _handle_solve(self) -> str:
-        """从 ESP32 获取面片状态 → 求解 → 下发转动。
-
-        步骤：
-            1. 从 cube_api 获取当前 kociemba 格式面片字符串
-            2. 调用 CFOP 求解器生成解法
-            3. 将解法推入 move_queue
-            4. 半自动: 直接回到 scramble 等待新打乱
-               全自动: 检测新 UI（新打乱 or 结算）
-        """
-        logger.info("solve: 获取面片状态...")
-
-        facelets = await self.cube.get_facelets()
-        if not facelets or len(facelets) != 54:
-            logger.warning("solve: 无效面片: %s", facelets)
-            return "reinit" if self.mode == "full" else "scramble"
-
-        logger.info("solve: facelets = %s", facelets)
-
-        try:
-            result = solve_cfop(facelets)
-        except Exception as e:
-            logger.error("solve: CFOP 求解失败: %s", e)
-            return "reinit" if self.mode == "full" else "scramble"
-
+    try:
+        result = solve_cfop(facelets)
         solution = result["solution"]
-        total = len(solution.split())
-        logger.info("solve: 解法 = %s (%d 步)", solution, total)
-
+        logger.info("solve: %s (%d步)", solution, len(solution.split()))
         await self.move_queue.put(solution)
-        logger.info("solve: 已下发转动指令到 move_queue")
+    except Exception as e:
+        logger.error("solve 失败: %s", e)
+    return "scramble"
 
-        if self.mode == "semi":
-            # 半自动：直接回到 scramble，等待人类完成 UI 操作后出现新打乱
-            logger.info("solve: 半自动模式，返回 scramble 等待新打乱")
-            return "scramble"
 
+# ======================================================================
+# Rank 模式：全自动排位赛
+#   init(begin_rank) → scramble(segment循环) → solve → end_rank → re_rank → scramble
+# ======================================================================
+
+async def _rank_init(self: Controller) -> str:
+    """检测并点击 begin_rank 按钮进入排位。"""
+    logger.info("rank/init: 等待 begin_rank...")
+    self._scramble_seen_move = False
+    ok, _, _ = await self._wait_for_ui("begin_rank", timeout=60.0)
+    if ok:
+        await self._click_feature("begin_rank")
         await asyncio.sleep(2.0)
+        return "scramble"
+    return "init"
 
-        frame = self.scrcpy.last_frame
-        if frame:
-            matched_scramble, _ = self.detector.detect(frame, "scramble_area")
-            matched_result, _ = self.detector.detect(frame, "result_screen")
-            if matched_scramble:
-                logger.info("solve: 检测到新打乱 UI")
-                return "scramble"
-            elif matched_result:
-                logger.info("solve: 检测到结算 UI")
-                return "reinit"
 
-        logger.info("solve: 保持 solve，等待明确 UI 变化")
+async def _rank_scramble(self: Controller) -> str:
+    """持续检测打乱区域是否有字符气泡。
+
+    有气泡 → 说明还在打乱界面，OCR 识别后下发，保持 scramble
+    无气泡 → 说明已进入还原阶段，切换到 solve
+    """
+    frame = self.scrcpy.last_frame
+    if frame is None:
+        await asyncio.sleep(0.5)
+        return "scramble"
+
+    feat = self.recipe.recipe.feature("scramble_area")
+    if feat and feat.roi:
+        x, y, w, h = feat.roi
+        crop = frame[y:y+h, x:x+w]
+    else:
+        crop = frame
+
+    chars = segment(crop)
+    if chars:
+        logger.debug("rank/scramble: 检测到 %d 个字符区域，识别中...", len(chars))
+        if self.classifier:
+            char_imgs = [c[0] for c in chars]
+            labels = self.classifier.predict_batch(char_imgs)
+
+            # 保存每步所有字符区域到 debug/，便于后续重新打标训练
+            ts = int(time.time())
+            for idx, (char_img, (cx, cy, r)) in enumerate(chars):
+                debug_dir = Path("debug") / "scramble"
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                cv2.imwrite(str(debug_dir / f"{ts}_{idx}.png"), char_img)
+
+            moves = parse(labels)
+            if moves:
+                self._scramble_seen_move = True
+                logger.info("rank/scramble: 帧=%d 分类=%s 识别=%s", ts, labels, moves)
+                await self.move_queue.put(moves)
+            else:
+                logger.debug("rank/scramble: 分类=%s (无有效转动)", labels)
+        await asyncio.sleep(1.0)
+        return "scramble"
+    else:
+        if self._scramble_seen_move:
+            logger.info("rank/scramble: 无字符区域，进入 solve")
+            self._scramble_seen_move = False
+            await asyncio.sleep(1.0)
+            return "solve"
+        logger.debug("rank/scramble: 无字符区域，等待出现转动气泡...")
+        await asyncio.sleep(1.0)
+        return "scramble"
+
+
+async def _rank_solve(self: Controller) -> str:
+    """获取面片 → CFOP 求解 → 下发转动 → 同时检测 scramble 和 end_rank。"""
+    logger.info("rank/solve: 求解...")
+    facelets = await self.cube.get_facelets()
+    if not facelets or len(facelets) != 54:
+        await asyncio.sleep(1.0)
         return "solve"
 
-    async def _handle_reinit(self) -> str:
-        """点击各种结算 UI，直至回到 init。
+    try:
+        result = solve_cfop(facelets)
+        solution = result["solution"]
+        logger.info("rank/solve: %s (%d步)", solution, len(solution.split()))
+        await self.move_queue.put(solution)
+    except Exception as e:
+        logger.error("rank/solve 失败: %s", e)
 
-        步骤：
-            1. 检测结算 UI（result_screen）
-            2. 点击确认/返回按钮
-            3. 等待回到 init 状态（匹配按钮 UI）
-        """
-        logger.info("reinit: 点击结算 UI，返回 init...")
+    self._scramble_seen_move = False
+    logger.info("rank/solve: 同时检测 scramble 和 end_rank...")
+    elapsed = 0.0
+    while elapsed < 180.0:
+        frame = self.scrcpy.last_frame
+        if frame is None:
+            await asyncio.sleep(0.5)
+            elapsed += 0.5
+            continue
 
-        # 点击结算确认按钮（如果有配置）
-        matched, center = self.detector.detect(self.scrcpy.last_frame, "result_screen")
-        if matched and center:
-            logger.info("reinit: 点击结算 UI 中心 %s", center)
-            self.scrcpy.tap(*center)
+        matched_end, center_end = self.detector.detect(frame, "end_rank")
+        if matched_end and center_end:
+            logger.info("rank/solve: 检测到 end_rank，点击")
+            self.scrcpy.tap(*center_end)
             await asyncio.sleep(2.0)
+            return "re_rank"
 
-        # 等待回到 init 状态
-        # 这里简化：等待几秒后直接返回 init
-        await asyncio.sleep(3.0)
-        logger.info("reinit: 返回 init")
-        return "init"
+        feat = self.recipe.recipe.feature("scramble_area")
+        if feat and feat.roi:
+            x, y, w, h = feat.roi
+            crop = frame[y:y+h, x:x+w]
+        else:
+            crop = frame
+        chars = segment(crop)
+        if chars:
+            logger.debug("rank/solve: 检测到 %d 个字符区域", len(chars))
+            if self.classifier:
+                char_imgs = [c[0] for c in chars]
+                labels = self.classifier.predict_batch(char_imgs)
+                moves = parse(labels)
+                if moves:
+                    self._scramble_seen_move = True
+                    logger.info("rank/solve: 检测到新打乱，回到 scramble")
+                    return "scramble"
+        await asyncio.sleep(0.5)
+        elapsed += 0.5
+    return "solve"
+
+
+async def _rank_re_rank(self: Controller) -> str:
+    """检测并点击 re_rank 按钮，返回 scramble。"""
+    self._scramble_seen_move = False
+    logger.info("rank/re_rank: 等待 re_rank...")
+    ok, _, center = await self._wait_for_ui("re_rank", timeout=30.0)
+    if ok and center:
+        logger.info("rank/re_rank: 点击 re_rank")
+        self.scrcpy.tap(*center)
+        await asyncio.sleep(2.0)
+        return "scramble"
+    return "re_rank"
+
+
+# ======================================================================
+# 默认 handler（空操作）
+# ======================================================================
+
+async def _noop(self: Controller) -> str:
+    await asyncio.sleep(1.0)
+    return self.state
+
+
+# ======================================================================
+# Handler 路由表
+# ======================================================================
+
+def _get_handlers(mode: str) -> dict[str, any]:
+    if mode == "semi":
+        return {
+            "scramble": _semi_scramble,
+            "solve": _semi_solve,
+        }
+    if mode == "rank":
+        return {
+            "init": _rank_init,
+            "scramble": _rank_scramble,
+            "solve": _rank_solve,
+            "re_rank": _rank_re_rank,
+        }
+    return {}
 
 
 # ------------------------------------------------------------------
@@ -354,40 +378,40 @@ class Controller:
 # ------------------------------------------------------------------
 
 if __name__ == "__main__":
-    """单独测试 Controller（Mock 模式）。
+    """单独测试 Controller。
 
     示例：
-        python controller.py                    # 使用默认配置
-        python controller.py --classifier knn   # 指定 KNN 分类器
+        python controller.py                                    # 按 recipe mode 运行
+        python controller.py --classifier cnn --host 192.168.50.246
     """
-    import sys
     import argparse
 
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--classifier", default="knn", choices=["knn", "template", "cnn"])
-    parser.add_argument("--mode", default=None, choices=["full", "semi"],
-                        help="覆盖 recipe 中的 mode 配置（测试用）")
+    parser.add_argument("--classifier", default="cnn",
+                        choices=["knn", "template", "cnn", "hog_svm"],
+                        help="分类器后端")
+    parser.add_argument("--host", default="192.168.50.246", help="ESP32 IP")
+    parser.add_argument("--mock", action="store_true", help="Mock 测试")
     args = parser.parse_args()
 
     classifier_config = {"type": args.classifier}
 
     async def main():
-        # 使用 MockCubeAPI 测试（不需要真实 ESP32）
-        from device.cube_api import MockCubeAPI
-
         controller = Controller(classifier_config=classifier_config)
-        # 替换为 Mock
-        controller.cube = MockCubeAPI()
-        controller.scrcpy = ScrcpyClient()  # 无真实连接，last_frame 返回 None
-        if args.mode:
-            controller.mode = args.mode
-            controller.state = "scramble" if args.mode == "semi" else "wait_init"
-            logger.info("测试模式覆盖: mode=%s, state=%s", controller.mode, controller.state)
+        if args.mock:
+            from device.cube_api import MockCubeAPI
+            controller.cube = MockCubeAPI()
+            controller.cube_loop.cube_api = controller.cube
+            controller.scrcpy = ScrcpyClient()
+            logger.info("Mock 模式")
+        else:
+            controller.cube = CubeAPI(host=args.host)
+            controller.cube_loop.cube_api = controller.cube
         await controller.run()
 
     asyncio.run(main())

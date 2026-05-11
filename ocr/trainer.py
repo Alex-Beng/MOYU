@@ -265,14 +265,21 @@ def train_cnn(data_dir: str, model_output: str):
             x = self.fc2(x)
             return x
 
-    # 构建数据
     h, w = CHAR_SIZE[1], CHAR_SIZE[0]
     x = torch.tensor(features, dtype=torch.float32)
     y = torch.tensor(labels, dtype=torch.long)
 
     model = SimpleCNN()
+    weights_path = Path(model_output).with_suffix(".pt")
+
+    if weights_path.exists():
+        model.load_state_dict(torch.load(str(weights_path), weights_only=True))
+        logger.info("从已有权重继续训练: %s", weights_path)
+    else:
+        logger.info("从头开始训练")
+    lr = 0.0001 if weights_path.exists() else 0.001
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     def accuracy(output, target):
         pred = output.argmax(dim=1)
@@ -281,7 +288,7 @@ def train_cnn(data_dir: str, model_output: str):
     print(f"{'Epoch':>6}  {'Loss':>8}  {'Acc':>8}")
     print("-" * 24)
 
-    for epoch in range(50):
+    for epoch in range(80):
         model.train()
         optimizer.zero_grad()
         output = model(x)
@@ -300,6 +307,10 @@ def train_cnn(data_dir: str, model_output: str):
                        input_names=["input"], output_names=["output"],
                        dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}})
     logger.info("CNN 模型已导出 ONNX: %s", model_path)
+
+    # 保存权重供续训
+    torch.save(model.state_dict(), str(weights_path))
+    logger.info("CNN 权重已保存: %s", weights_path)
 
 
 # ------------------------------------------------------------------
@@ -352,8 +363,7 @@ def train_hog_svm(data_dir: str, model_output: str):
 
     model_path = Path(model_output)
     model_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(model_path, "wb") as f:
-        pickle.dump({"svm": svm, "win_size": win_size}, f)
+    svm.save(str(model_path))
     logger.info("HOG+SVM 模型已保存: %s (%d 样本)", model_path, len(labels))
 
 

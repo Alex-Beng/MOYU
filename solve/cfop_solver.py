@@ -3,7 +3,7 @@ import pickle
 import re
 from collections import deque
 import random
-from ALLL import EX_ALLLS
+from solve.ALLL import EX_ALLLS
 
 DEBUG = False
 DEBUG = True

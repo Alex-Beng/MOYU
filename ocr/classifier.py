@@ -164,7 +164,7 @@ class TemplateClassifier(ClassifierBase):
 class HOGSVMClassifier(ClassifierBase):
     """HOG 特征 + SVM 分类器。
 
-    模型文件为 pickle，包含 {"svm": cv2.ml.SVM 对象, "win_size": (w, h)}。
+    模型保存为 OpenCV SVM 格式，使用 cv2.ml.SVM_load 加载。
     """
 
     def __init__(self, model_path: str | Path):
@@ -177,10 +177,7 @@ class HOGSVMClassifier(ClassifierBase):
         if not path.exists():
             logger.warning("HOG+SVM 模型文件不存在: %s", path)
             return
-        with open(path, "rb") as f:
-            data = pickle.load(f)
-        self._svm = data["svm"]
-        self._win_size = data.get("win_size", CHAR_SIZE)
+        self._svm = cv2.ml.SVM_load(str(path))
         logger.info("HOG+SVM 模型加载完成: %s", path)
 
     def predict(self, char_img: np.ndarray) -> str:

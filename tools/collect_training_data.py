@@ -23,6 +23,7 @@
 import argparse
 import logging
 import signal
+import time
 from pathlib import Path
 
 import cv2
@@ -103,9 +104,6 @@ def _run_ocr_collect(client: ScrcpyClient, output_dir: str, classifier: Classifi
             if len(chars) == 0:
                 print("\n[错误] 未检测到字符区域")
                 continue
-            if len(chars) > 1:
-                print(f"\n[错误] 检测到 {len(chars)} 个字符区域，预期 1 个，请调整 HoughCircles 参数")
-                continue
 
             vis = frame.copy()
             for idx, (_, (cx, cy, r)) in enumerate(chars):
@@ -155,19 +153,25 @@ def _run_ocr_collect(client: ScrcpyClient, output_dir: str, classifier: Classifi
                 continue
 
             labeled = []
+            ts = int(time.time())
             for idx, (char_img, (cx, cy, r)) in enumerate(chars):
                 show_img = cv2.resize(char_img, (CHAR_SIZE[1] * 3, CHAR_SIZE[0] * 3))
 
                 # 模型预判
-                hint = ""
+                pred = "?"
                 if classifier:
                     pred = classifier.predict(char_img)
-                    hint = f" 模型预测={pred}"
 
-                win_name = f"char[{idx}] - 按[2]确认模型预测 或 按其他键纠正"
+                # 在图片上绘制预测标签
+                h_show, w_show = show_img.shape[:2]
+                label_color = (0, 255, 0) if pred != "?" else (0, 0, 255)
+                cv2.rectangle(show_img, (0, 0), (w_show, 28), label_color, -1)
+                cv2.putText(show_img, pred, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
+
+                win_name = f"char[{idx}] - 按[回车]确认 或 按标签键纠正"
                 cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
                 cv2.imshow(win_name, show_img)
-                print(f"\n字符 [{idx+1}/{len(chars)}] 位置 ({cx},{cy}){hint}", end="", flush=True)
+                print(f"\n字符 [{idx+1}/{len(chars)}] 位置 ({cx},{cy}) 模型预测={pred}", end="", flush=True)
 
                 while True:
                     k = cv2.waitKey(0) & 0xFF
@@ -181,9 +185,9 @@ def _run_ocr_collect(client: ScrcpyClient, output_dir: str, classifier: Classifi
                         cv2.destroyWindow(win_name)
                         break
                     # 按 2 确认模型预判
-                    if k == ord('2') and classifier and pred and pred != "?":
+                    if k == 13 and classifier and pred and pred != "?":
                         seq += 1
-                        save_path = output / pred / f"{seq:04d}_{cx}_{cy}.png"
+                        save_path = output / pred / f"{ts}_{seq:04d}_{cx}_{cy}.png"
                         cv2.imwrite(str(save_path), char_img)
                         print(f" → {pred}(确认)  已保存 {save_path.name}", end="", flush=True)
                         labeled.append(pred)
@@ -192,7 +196,7 @@ def _run_ocr_collect(client: ScrcpyClient, output_dir: str, classifier: Classifi
                     label = _label_by_key(k)
                     if label:
                         seq += 1
-                        save_path = output / label / f"{seq:04d}_{cx}_{cy}.png"
+                        save_path = output / label / f"{ts}_{seq:04d}_{cx}_{cy}.png"
                         cv2.imwrite(str(save_path), char_img)
                         print(f" → {label}  已保存 {save_path.name}", end="", flush=True)
                         labeled.append(label)
@@ -246,6 +250,7 @@ def _ui_mouse_cb(event, x, y, flags, param):
 
 
 def _run_ui_collect(client: ScrcpyClient, output_dir: str):
+    global _ui_start, _ui_end
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
 
@@ -359,14 +364,14 @@ def main():
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
-    client = ScrcpyClient(serial=args.serial, max_fps=5, max_width=0, bitrate=200_000_000)
+    client = ScrcpyClient(serial=args.serial, max_fps=30, max_width=0, bitrate=200_000_000)
     client.connect()
 
     classifier = None
     if hasattr(args, "model") and args.model:
         if args.model.endswith(".onnx"):
             classifier = CNNClassifier(args.model)
-        elif "hog_svm" in args.model and args.model.endswith(".pkl"):
+        elif "hog_svm" in args.model:
             classifier = HOGSVMClassifier(args.model)
         elif args.model.endswith(".pkl"):
             classifier = KNNClassifier(args.model)
@@ -409,11 +414,19 @@ python -m tools.collect_training_data ocr
 # 训练 KNN
 python -m ocr.trainer train --backend knn --data data/ --output ocr/knn_model.pkl
 # 训练 CNN
-python -m tools.collect_training_data ocr --model ocr/cnn_model.onnx --host 192.168.50.246
+python -m ocr.trainer train --backend cnn --data data/ --output ocr/cnn_model.onnx
+# 训练 hog+svm
+python -m ocr.trainer train --backend hog_svm --data data/ --output ocr/hog_svm_model.pkl
 
 # 用 KNN 辅助打标
 python -m tools.collect_training_data ocr --model ocr/knn_model.pkl --host 192.168.50.246
 
 # 用 CNN 辅助打标
 python -m tools.collect_training_data ocr --model ocr/cnn_model.onnx --host 192.168.50.246
+
+# 用 hog+svm 辅助打标
+python -m tools.collect_training_data ocr --model ocr/hog_svm_model.pkl --host  192.168.50.246
+
+# ui 收集
+python -m tools.collect_training_data ui --output templates/ --host  192.168.50.246
 """

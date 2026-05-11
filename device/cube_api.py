@@ -120,14 +120,27 @@ class CubeAPI:
         logger.info("→ %s %s  body=%s", method, url, body)
         try:
             async with self._session.request(method, url, **kwargs) as resp:
-                resp.raise_for_status()
-                # ESP32 返回纯文本的路径
-                if path in ("/api/facelets", "/api/move", "/api/moves"):
+                content_type = resp.content_type or ""
+
+                # ESP32 返回纯文本/JSON 的路径
+                if path in ("/api/facelets", "/api/move", "/api/moves", "/api/state"):
                     text = await resp.text()
-                    logger.info("← %s %s  resp=%s", method, url, text.strip())
+                    text = text.strip()
+                    logger.info("← %s %s  resp=%s", method, url, text)
                     if path == "/api/facelets":
                         return text
-                    return {"ok": True, "response": text.strip()}
+                    if path == "/api/state":
+                        import json
+                        return json.loads(text)
+                    return {"ok": True, "response": text}
+
+                resp.raise_for_status()
+
+                if "json" not in content_type:
+                    text = await resp.text()
+                    logger.warning("← %s %s 非JSON: %s", method, url, text[:120])
+                    return {}
+
                 result = await resp.json()
                 logger.info("← %s %s  resp=%s", method, url, result)
                 return result

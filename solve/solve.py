@@ -1,11 +1,13 @@
-import requests
-import sys
 import argparse
+import logging
 import random
+import sys
 
 FACE_MAP = {'U':0,'R':1,'F':2,'D':3,'L':4,'B':5}
 COLOR_MAP = {'U':'W','R':'R','F':'G','D':'Y','L':'O','B':'B'}
 SOLVED = "UUUUUUUUURRRRRRRRRFFFFFFFFFDDDDDDDDDLLLLLLLLLBBBBBBBBB"
+
+logger = logging.getLogger(__name__)
 # GBBWWBGRYYOYGOYOOORWORGGWYYBWWWRORGRRROYBRGOWGBBGYYBBW
 
 ROTATION_EQUIV = {
@@ -37,6 +39,7 @@ def expand_rotations(tokens):
     return result
 
 def get_facelets(base):
+    import requests
     r = requests.get(f"{base}/api/facelets")
     r.raise_for_status()
     return r.text.strip()
@@ -68,30 +71,28 @@ def kociemba_to_rubik_cube(k_facelets):
 
 def solve_cfop(facelets, debug=False):
     try:
-        import cfop_solver
-        from cfop_solver import CFOPSolver
+        from solve import cfop_solver
+        from solve.cfop_solver import CFOPSolver
     except ImportError:
-        print("cfop_solver.py not found in scripts/")
-        sys.exit(1)
+        raise RuntimeError("cfop_solver.py not found in solve/")
     cfop_solver.DEBUG = debug
     solver = CFOPSolver()
     result = solver.solve(facelets)
     if result is None:
-        print("No CFOP solution found")
-        sys.exit(1)
+        raise RuntimeError("No CFOP solution found")
     cross_n = len(result['cross'].split()) if result['cross'] else 0
     f2l_n   = len(result['f2l'].split())   if result['f2l']   else 0
     oll_n   = len(result['oll'].split())   if result['oll']   else 0
     pll_n   = len(result['pll'].split())   if result['pll']   else 0
     alll_n  = len(result['alll'].split())  if result['alll']  else 0
     total_n = cross_n + f2l_n + oll_n + pll_n + alll_n
-    print(f"  Cross ({cross_n}): {result['cross']}")
-    print(f"  F2L   ({f2l_n}): {result['f2l']}")
-    print(f"  OLL   ({oll_n}): {result['oll']}")
-    print(f"  PLL   ({pll_n}): {result['pll']}")
-    print(f"  ALLL  ({alll_n}): {result['alll']}")
-    print(f"  Total : {total_n} moves")
-    return result['solution']
+    logger.info("  Cross (%d): %s", cross_n, result['cross'])
+    logger.info("  F2L   (%d): %s", f2l_n, result['f2l'])
+    logger.info("  OLL   (%d): %s", oll_n, result['oll'])
+    logger.info("  PLL   (%d): %s", pll_n, result['pll'])
+    logger.info("  ALLL  (%d): %s", alll_n, result['alll'])
+    logger.info("  Total : %d moves", total_n)
+    return {"solution": result['solution']}
 
 def solve_kociemba(facelets):
     try:
@@ -139,6 +140,7 @@ def parse_moves(solution):
     return moves
 
 def send_moves(base, moves):
+    import requests
     if not moves:
         print("No moves to send")
         return

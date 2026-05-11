@@ -1,30 +1,28 @@
 {
     "name": "xiaomi 13 rank",
-    "mode": "full",
+    "mode": "rank",
     "device": {
         "width": 1080,
         "height": 2400
     },
     "ui": {
-        "match_button": {
-            "template": "templates/match_btn.png",
-            "roi": [400, 1800, 280, 80],
-            "threshold": 0.85
-        },
-        "scramble_area": {
-            "template": "templates/scramble_area.png",
-            "roi": [50, 400, 980, 300],
-            "threshold": 0.80
-        },
-        "result_screen": {
-            "template": "templates/result.png",
+        "begin_rank": {
+            "template": "../../templates/begin_rank.png",
             "roi": null,
-            "threshold": 0.85
+            "threshold": 0.85,
+            "desc": "开始排位按钮"
         },
-        "connected_icon": {
-            "template": "templates/connected.png",
-            "roi": [0, 0, 200, 100],
-            "threshold": 0.90
+        "end_rank": {
+            "template": "../../templates/end_rank.png",
+            "roi": null,
+            "threshold": 0.80,
+            "desc": "结算确认按钮"
+        },
+        "re_rank": {
+            "template": "../../templates/re_rank.png",
+            "roi": null,
+            "threshold": 0.85,
+            "desc": "再来一局按钮"
         }
     }
 }
