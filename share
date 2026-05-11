@@ -1,5 +1,0 @@
-  labeled: ["R'"]
-  解析序列: R'
-  face/dir: [{'face': 1, 'dir': 1}]
-2026-05-11 04:28:11,843 [device.cube_api] INFO: 下发转动: R' → 1 步
-  已下发转动到 ESP32
