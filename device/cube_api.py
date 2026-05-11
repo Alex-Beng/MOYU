@@ -116,16 +116,21 @@ class CubeAPI:
             logger.warning("session 未初始化，跳过请求")
             return {}
         url = f"{self.base_url}{path}"
+        body = kwargs.get("json")
+        logger.info("→ %s %s  body=%s", method, url, body)
         try:
             async with self._session.request(method, url, **kwargs) as resp:
                 resp.raise_for_status()
                 # ESP32 返回纯文本的路径
                 if path in ("/api/facelets", "/api/move", "/api/moves"):
                     text = await resp.text()
+                    logger.info("← %s %s  resp=%s", method, url, text.strip())
                     if path == "/api/facelets":
                         return text
                     return {"ok": True, "response": text.strip()}
-                return await resp.json()
+                result = await resp.json()
+                logger.info("← %s %s  resp=%s", method, url, result)
+                return result
         except aiohttp.ClientError as e:
             logger.warning("请求失败 %s %s: %s", method, url, e)
             return {}
