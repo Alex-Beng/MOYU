@@ -123,7 +123,9 @@ def collect_from_images(images_dir: str, output_dir: str):
 # ------------------------------------------------------------------
 
 def _load_dataset(data_dir: str) -> tuple[np.ndarray, np.ndarray]:
-    """从 data_dir/{label}/ 加载所有样本，返回 (features, labels)。"""
+    """从 data_dir/{label}/ 加载所有样本，返回 (features, labels)。
+    features 为展平的二值向量（KNN 用）。
+    """
     data_path = Path(data_dir)
     features = []
     labels = []
@@ -144,6 +146,34 @@ def _load_dataset(data_dir: str) -> tuple[np.ndarray, np.ndarray]:
             labels.append(label_idx)
 
     return np.array(features, dtype=np.float32), np.array(labels, dtype=np.int32)
+
+
+def _load_dataset_grayscale(data_dir: str) -> tuple[np.ndarray, np.ndarray]:
+    """从 data_dir/{label}/ 加载所有样本，返回 (features, labels)。
+    features 为 (N, 1, H, W) 灰度值，归一化到 [0,1]（CNN 用）。
+    """
+    data_path = Path(data_dir)
+    h, w = CHAR_SIZE[1], CHAR_SIZE[0]
+    features = []
+    labels = []
+
+    for label_idx, label in enumerate(LABELS):
+        label_dir = data_path / label
+        if not label_dir.exists():
+            continue
+        imgs = list(label_dir.glob("*.png")) + list(label_dir.glob("*.jpg"))
+        logger.info("加载 %s: %d 张", label, len(imgs))
+        for img_path in imgs:
+            img = cv2.imread(str(img_path))
+            if img is None:
+                continue
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            gray = cv2.resize(gray, CHAR_SIZE)
+            features.append(gray)
+            labels.append(label_idx)
+
+    x = np.array(features, dtype=np.float32).reshape(-1, 1, h, w) / 255.0
+    return x, np.array(labels, dtype=np.int32)
 
 
 # ------------------------------------------------------------------
@@ -211,7 +241,7 @@ def train_cnn(data_dir: str, model_output: str):
         logger.error("PyTorch 未安装，CNN 训练不可用。pip install torch")
         return
 
-    features, labels = _load_dataset(data_dir)
+    features, labels = _load_dataset_grayscale(data_dir)
     if len(features) == 0:
         logger.error("未找到任何训练样本")
         return
@@ -237,7 +267,7 @@ def train_cnn(data_dir: str, model_output: str):
 
     # 构建数据
     h, w = CHAR_SIZE[1], CHAR_SIZE[0]
-    x = torch.tensor(features.reshape(-1, 1, h, w) / 255.0, dtype=torch.float32)
+    x = torch.tensor(features, dtype=torch.float32)
     y = torch.tensor(labels, dtype=torch.long)
 
     model = SimpleCNN()
@@ -273,6 +303,61 @@ def train_cnn(data_dir: str, model_output: str):
 
 
 # ------------------------------------------------------------------
+# 训练 HOG + SVM
+# ------------------------------------------------------------------
+
+def train_hog_svm(data_dir: str, model_output: str):
+    """提取 HOG 特征 + 训练 SVM，保存为 pickle。"""
+    data_path = Path(data_dir)
+    h, w = CHAR_SIZE[1], CHAR_SIZE[0]
+    win_size = (w, h)
+    block_size = (16, 16)
+    block_stride = (8, 8)
+    cell_size = (8, 8)
+    nbins = 9
+    hog = cv2.HOGDescriptor(win_size, block_size, block_stride, cell_size, nbins)
+
+    features = []
+    labels = []
+
+    for label_idx, label in enumerate(LABELS):
+        label_dir = data_path / label
+        if not label_dir.exists():
+            continue
+        imgs = list(label_dir.glob("*.png")) + list(label_dir.glob("*.jpg"))
+        logger.info("加载 %s: %d 张", label, len(imgs))
+        for img_path in imgs:
+            img = cv2.imread(str(img_path))
+            if img is None:
+                continue
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            gray = cv2.resize(gray, win_size)
+            feat = hog.compute(gray).flatten()
+            features.append(feat)
+            labels.append(label_idx)
+
+    if len(features) == 0:
+        logger.error("未找到任何训练样本")
+        return
+
+    x = np.array(features, dtype=np.float32)
+    y = np.array(labels, dtype=np.int32)
+
+    svm = cv2.ml.SVM_create()
+    svm.setType(cv2.ml.SVM_C_SVC)
+    svm.setKernel(cv2.ml.SVM_RBF)
+    svm.setC(12.5)
+    svm.setGamma(0.5)
+    svm.train(x, cv2.ml.ROW_SAMPLE, y)
+
+    model_path = Path(model_output)
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(model_path, "wb") as f:
+        pickle.dump({"svm": svm, "win_size": win_size}, f)
+    logger.info("HOG+SVM 模型已保存: %s (%d 样本)", model_path, len(labels))
+
+
+# ------------------------------------------------------------------
 # CLI 入口
 # ------------------------------------------------------------------
 
@@ -280,6 +365,7 @@ _TRAIN_BACKENDS = {
     "knn":      train_knn,
     "template":  export_templates,
     "cnn":       train_cnn,
+    "hog_svm":   train_hog_svm,
 }
 
 if __name__ == "__main__":
@@ -310,6 +396,7 @@ if __name__ == "__main__":
             "knn": "ocr/knn_model.pkl",
             "template": "ocr/templates/",
             "cnn": "ocr/cnn_model.onnx",
+            "hog_svm": "ocr/hog_svm_model.pkl",
         }[args.backend]
         _TRAIN_BACKENDS[args.backend](args.data, output)
     else:

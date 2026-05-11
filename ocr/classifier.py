@@ -18,6 +18,9 @@
     # CNN
     clf = create_classifier("cnn", model_path="ocr/cnn_model.onnx")
 
+    # HOG + SVM
+    clf = create_classifier("hog_svm", model_path="ocr/hog_svm_model.pkl")
+
     # 配置文件驱动
     clf = create_classifier.from_config({"type": "knn", "model_path": "..."})
 """
@@ -155,6 +158,53 @@ class TemplateClassifier(ClassifierBase):
 
 
 # ------------------------------------------------------------------
+# HOG + SVM 后端
+# ------------------------------------------------------------------
+
+class HOGSVMClassifier(ClassifierBase):
+    """HOG 特征 + SVM 分类器。
+
+    模型文件为 pickle，包含 {"svm": cv2.ml.SVM 对象, "win_size": (w, h)}。
+    """
+
+    def __init__(self, model_path: str | Path):
+        self._svm: cv2.ml.SVM | None = None
+        self._win_size = CHAR_SIZE
+        self.load(model_path)
+
+    def load(self, path: str | Path):
+        path = Path(path)
+        if not path.exists():
+            logger.warning("HOG+SVM 模型文件不存在: %s", path)
+            return
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        self._svm = data["svm"]
+        self._win_size = data.get("win_size", CHAR_SIZE)
+        logger.info("HOG+SVM 模型加载完成: %s", path)
+
+    def predict(self, char_img: np.ndarray) -> str:
+        if self._svm is None:
+            return "?"
+        gray = cv2.cvtColor(char_img, cv2.COLOR_BGR2GRAY)
+        gray = cv2.resize(gray, self._win_size)
+        hog = self._extract_hog(gray)
+        _, result = self._svm.predict(hog.reshape(1, -1))
+        idx = int(result[0][0])
+        return LABELS[idx] if 0 <= idx < len(LABELS) else "?"
+
+    @staticmethod
+    def _extract_hog(gray: np.ndarray) -> np.ndarray:
+        win_size = gray.shape[::-1]
+        block_size = (16, 16)
+        block_stride = (8, 8)
+        cell_size = (8, 8)
+        nbins = 9
+        hog_desc = cv2.HOGDescriptor(win_size, block_size, block_stride, cell_size, nbins)
+        return hog_desc.compute(gray).flatten()
+
+
+# ------------------------------------------------------------------
 # CNN 后端（ONNX Runtime）
 # ------------------------------------------------------------------
 
@@ -204,6 +254,7 @@ _BACKEND_MAP = {
     "knn":      KNNClassifier,
     "template":  TemplateClassifier,
     "cnn":       CNNClassifier,
+    "hog_svm":   HOGSVMClassifier,
 }
 
 
@@ -226,6 +277,8 @@ def create_classifier(config: dict) -> ClassifierBase:
         return cls(templates_dir=config.get("templates_dir", "ocr/templates/"))
     elif backend_type == "cnn":
         return cls(model_path=config.get("model_path", "ocr/cnn_model.onnx"))
+    elif backend_type == "hog_svm":
+        return cls(model_path=config.get("model_path", "ocr/hog_svm_model.pkl"))
 
 
 if __name__ == "__main__":
@@ -243,7 +296,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("image", help="字符图路径")
-    parser.add_argument("--backend", default="knn", choices=["knn", "template", "cnn"])
+    parser.add_argument("--backend", default="knn", choices=["knn", "template", "cnn", "hog_svm"])
     parser.add_argument("--model", default=None, help="模型路径（knn=.pkl, cnn=.onnx, template=目录）")
     args = parser.parse_args()
 

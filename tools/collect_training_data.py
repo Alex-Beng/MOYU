@@ -30,7 +30,7 @@ import numpy as np
 
 from device.scrcpy_client import ScrcpyClient
 from device.cube_api import CubeAPI, parse_move_notation
-from ocr.classifier import LABELS, CNNClassifier, KNNClassifier, ClassifierBase
+from ocr.classifier import LABELS, CNNClassifier, KNNClassifier, HOGSVMClassifier, ClassifierBase
 from ocr.parser import parse
 from ocr.segmentor import CHAR_SIZE, segment
 
@@ -100,8 +100,11 @@ def _run_ocr_collect(client: ScrcpyClient, output_dir: str, classifier: Classifi
         key = cv2.waitKey(100) & 0xFF
         if key == ord(' '):
             chars = segment(frame)
-            if not chars:
-                print("\n未检测到字符区域")
+            if len(chars) == 0:
+                print("\n[错误] 未检测到字符区域")
+                continue
+            if len(chars) > 1:
+                print(f"\n[错误] 检测到 {len(chars)} 个字符区域，预期 1 个，请调整 HoughCircles 参数")
                 continue
 
             vis = frame.copy()
@@ -363,6 +366,8 @@ def main():
     if hasattr(args, "model") and args.model:
         if args.model.endswith(".onnx"):
             classifier = CNNClassifier(args.model)
+        elif "hog_svm" in args.model and args.model.endswith(".pkl"):
+            classifier = HOGSVMClassifier(args.model)
         elif args.model.endswith(".pkl"):
             classifier = KNNClassifier(args.model)
         else:
