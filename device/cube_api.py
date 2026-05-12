@@ -1,7 +1,7 @@
 """Cube API —— 通过 HTTP 向 ESP32-C3 (gan-cube-emu) 下发魔方转动指令
 
 基于 gan-cube-emu 的 HTTP API：
-    POST /api/move    单步转动 {"face": 0-5, "dir": 0-1}
+    POST /api/move    单步转动 {"face": 0-5, "dir": 0-2}
     POST /api/moves   批量转动 [{"face":0,"dir":0}, ...]
     GET  /api/state   获取当前魔方状态 JSON
     GET  /api/facelets kociemba 格式面片字符串
@@ -43,19 +43,16 @@ FACE_MAP = {
     "U": 0, "R": 1, "F": 2, "D": 3, "L": 4, "B": 5,
 }
 
-# dir: 0=CW(90°), 1=CCW(90°)
-# R → CW, R' → CCW, R2 → CW+CW (两步)
+# dir: 0=CW(90°), 1=CCW(90°), 2=180°
 DIR_CW = 0
 DIR_CCW = 1
+DIR_DOUBLE = 2
 
 
 def parse_move_notation(moves: str) -> list[dict]:
     """将标准魔方记号字符串转换为 face/dir 列表。
 
-    "R u R' U'" → [{"face":1,"dir":0}, {"face":0,"dir":0}, {"face":1,"dir":1}, {"face":0,"dir":1}]
-
-    180° 转动 (R2, U2 等) 拆为两步同方向 CW。
-    R2' 等价于 R2（两步 CW），因为 180° 无顺逆之分。
+    "R U R' U' D2" → [{"face":1,"dir":0}, {"face":0,"dir":0}, {"face":1,"dir":1}, {"face":0,"dir":1}, {"face":3,"dir":2}]
 
     Args:
         moves: 空格分隔的标准记号，如 "R U R' U' D2"
@@ -75,11 +72,8 @@ def parse_move_notation(moves: str) -> list[dict]:
             logger.warning("未知面: %s (token: %s)", face_char, token)
             continue
 
-        # 解析修饰符: ' = CCW, 2 = 180°
         if "2" in token:
-            # 180° = 两步 CW
-            result.append({"face": face, "dir": DIR_CW})
-            result.append({"face": face, "dir": DIR_CW})
+            result.append({"face": face, "dir": DIR_DOUBLE})
         elif "'" in token:
             result.append({"face": face, "dir": DIR_CCW})
         else:
@@ -93,9 +87,10 @@ class CubeAPI:
     ESP32 AP 模式默认 192.168.4.1。
     """
 
-    def __init__(self, host: str = "192.168.4.1", port: int = 80, timeout: float = 5.0):
+    def __init__(self, host: str = "192.168.4.1", port: int = 80, timeout: float = 5.0, single_step: bool = False):
         self.base_url = f"http://{host}:{port}"
         self.timeout = aiohttp.ClientTimeout(total=timeout)
+        self.single_step = single_step
         self._session: aiohttp.ClientSession | None = None
 
     async def open(self):
@@ -157,7 +152,7 @@ class CubeAPI:
 
         Args:
             face: 0-5 (U/R/F/D/L/B)
-            dir: 0=CW, 1=CCW
+            dir: 0=CW, 1=CCW, 2=180°
         """
         return await self._request("POST", "/api/move", json={"face": face, "dir": dir})
 
@@ -168,6 +163,8 @@ class CubeAPI:
     async def send_moves(self, moves: str) -> dict:
         """下发标准记号转动序列，自动转换为 face/dir。
 
+        当 self.single_step=True 时，逐步调用 /api/move 而非批量 /api/moves。
+
         Args:
             moves: 标准记号，如 "R U R' U'"
         """
@@ -175,7 +172,12 @@ class CubeAPI:
         if not steps:
             logger.warning("解析后无有效转动: %s", moves)
             return {}
-        logger.info("下发转动: %s → %d 步", moves, len(steps))
+        logger.info("下发转动: %s → %d 步%s", moves, len(steps),
+                     " (single_step)" if self.single_step else "")
+        if self.single_step:
+            for step in steps:
+                await self.send_move_raw(step["face"], step["dir"])
+            return {"ok": True}
         return await self.send_moves_raw(steps)
 
     # ------------------------------------------------------------------

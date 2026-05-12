@@ -37,10 +37,10 @@ logger = logging.getLogger(__name__)
 class Controller:
     """主控制器 —— 编排各独立任务"""
 
-    def __init__(self, classifier_config: dict | None = None):
+    def __init__(self, classifier_config: dict | None = None, single_step: bool = False):
         self.recipe = RecipeLoader()
         self.scrcpy = ScrcpyClient(max_width=0, bitrate=200_000_000)
-        self.cube = CubeAPI()
+        self.cube = CubeAPI(single_step=single_step)
         self.detector = Detector(self.recipe.recipe)
 
         self.classifier_config = classifier_config or {"type": "knn"}
@@ -178,15 +178,19 @@ async def _semi_scramble(self: Controller) -> str:
         if moves:
             logger.info("scramble: 识别=%s", moves)
             await self.move_queue.put(moves)
+            self._scramble_seen_move = True
+        else:
+            logger.debug("scramble: 分类=%s (无有效转动)", labels)
+    else:
+        if not chars:
+            # 无气泡 = 打乱结束
+            if self._scramble_seen_move:
+                logger.info("scramble: 无字符区域且已下发过转动，进入 solve")
+                self._scramble_seen_move = False
+                return "solve"
+            logger.debug("scramble: 无字符区域，等待打乱出现...")
 
-    await asyncio.sleep(5.0)
-
-    frame = self.scrcpy.last_frame
-    if frame and self.detector:
-        still_there, _ = self.detector.detect(frame, "scramble_area")
-        if not still_there:
-            logger.info("scramble: UI 消失，进入 solve")
-            return "solve"
+    await asyncio.sleep(1.0)
     return "scramble"
 
 
@@ -195,15 +199,18 @@ async def _semi_solve(self: Controller) -> str:
     logger.info("semi/solve: 求解...")
     facelets = await self.cube.get_facelets()
     if not facelets or len(facelets) != 54:
+        logger.warning("semi/solve: facelets 无效 (len=%d): %r", len(facelets) if facelets else 0, facelets)
+        await asyncio.sleep(1.0)
         return "scramble"
 
     try:
         result = solve_cfop(facelets)
         solution = result["solution"]
-        logger.info("solve: %s (%d步)", solution, len(solution.split()))
+        logger.info("semi/solve: %s (%d步)", solution, len(solution.split()))
+        # solution 是字符串，直接放入 move_queue
         await self.move_queue.put(solution)
     except Exception as e:
-        logger.error("solve 失败: %s", e)
+        logger.error("semi/solve 失败: %s", e, exc_info=True)
     return "scramble"
 
 
@@ -281,6 +288,7 @@ async def _rank_solve(self: Controller) -> str:
     logger.info("rank/solve: 求解...")
     facelets = await self.cube.get_facelets()
     if not facelets or len(facelets) != 54:
+        logger.warning("rank/solve: facelets 无效 (len=%d): %r", len(facelets) if facelets else 0, facelets)
         await asyncio.sleep(1.0)
         return "solve"
 
@@ -290,7 +298,7 @@ async def _rank_solve(self: Controller) -> str:
         logger.info("rank/solve: %s (%d步)", solution, len(solution.split()))
         await self.move_queue.put(solution)
     except Exception as e:
-        logger.error("rank/solve 失败: %s", e)
+        logger.error("rank/solve 失败: %s", e, exc_info=True)
 
     self._scramble_seen_move = False
     logger.info("rank/solve: 同时检测 scramble 和 end_rank...")
@@ -385,10 +393,17 @@ if __name__ == "__main__":
         python controller.py --classifier cnn --host 192.168.50.246
     """
     import argparse
+    from pathlib import Path
 
+    LOG_DIR = Path("log")
+    LOG_DIR.mkdir(exist_ok=True)
     logging.basicConfig(
         level=logging.DEBUG,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(LOG_DIR / "controller.log", encoding="utf-8"),
+        ],
     )
 
     parser = argparse.ArgumentParser()
@@ -397,12 +412,13 @@ if __name__ == "__main__":
                         help="分类器后端")
     parser.add_argument("--host", default="192.168.50.246", help="ESP32 IP")
     parser.add_argument("--mock", action="store_true", help="Mock 测试")
+    parser.add_argument("--single-step", action="store_true", help="逐步下发转动 (debug)")
     args = parser.parse_args()
 
     classifier_config = {"type": args.classifier}
 
     async def main():
-        controller = Controller(classifier_config=classifier_config)
+        controller = Controller(classifier_config=classifier_config, single_step=args.single_step)
         if args.mock:
             from device.cube_api import MockCubeAPI
             controller.cube = MockCubeAPI()
@@ -410,7 +426,7 @@ if __name__ == "__main__":
             controller.scrcpy = ScrcpyClient()
             logger.info("Mock 模式")
         else:
-            controller.cube = CubeAPI(host=args.host)
+            controller.cube = CubeAPI(host=args.host, single_step=args.single_step)
             controller.cube_loop.cube_api = controller.cube
         await controller.run()
 

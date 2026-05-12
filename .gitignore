@@ -9,3 +9,4 @@ __pycache__
 /debug
 /data.zip
 *.pt
+/log

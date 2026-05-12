@@ -135,8 +135,7 @@ def parse_moves(solution):
         elif t[1] == "'":
             moves.append({"face": face, "dir": 1})
         elif t[1] == "2":
-            moves.append({"face": face, "dir": 0})
-            moves.append({"face": face, "dir": 0})
+            moves.append({"face": face, "dir": 2})
     return moves
 
 def send_moves(base, moves):
@@ -182,7 +181,7 @@ def main():
         moves = parse_moves(solution)
 
     names = ['U','R','F','D','L','B']
-    move_strs = [names[m['face']] + ("'" if m['dir'] else '') for m in moves]
+    move_strs = [names[m['face']] + ({0: '', 1: "'", 2: '2'}[m['dir']]) for m in moves]
     print("Moves (%d quarter-turns): %s" % (len(moves), ' '.join(move_strs)))
 
     if args.send:

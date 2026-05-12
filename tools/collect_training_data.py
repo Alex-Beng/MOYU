@@ -54,7 +54,7 @@ def _label_by_key(key: int) -> str | None:
 # ─────────────────────────────────────────────────────────────────
 
 def _run_ocr_collect(client: ScrcpyClient, output_dir: str, classifier: ClassifierBase | None = None,
-                     cube_host: str | None = None):
+                     cube_host: str | None = None, single_step: bool = False):
     output = Path(output_dir)
     for label in LABELS:
         (output / label).mkdir(parents=True, exist_ok=True)
@@ -62,7 +62,7 @@ def _run_ocr_collect(client: ScrcpyClient, output_dir: str, classifier: Classifi
     cube = None
     if cube_host:
         import asyncio
-        cube = CubeAPI(host=cube_host)
+        cube = CubeAPI(host=cube_host, single_step=single_step)
 
         async def _open_cube():
             await cube.open()
@@ -348,6 +348,7 @@ def main():
     p_ocr.add_argument("--serial", default=None, help="adb 设备序列号")
     p_ocr.add_argument("--model", default=None, help="CNN ONNX 模型路径（辅助打标用）")
     p_ocr.add_argument("--host", default=None, help="ESP32 IP（标注完成后下发转动）")
+    p_ocr.add_argument("--single-step", action="store_true", help="逐步下发转动 (debug)")
 
     p_ui = sub.add_parser("ui", help="采集 UI 模板图")
     p_ui.add_argument("--output", default="recipe/recipes/templates/", help="模板保存目录")
@@ -387,7 +388,7 @@ def main():
 
     try:
         if args.mode == "ocr":
-            _run_ocr_collect(client, args.output, classifier=classifier, cube_host=args.host)
+            _run_ocr_collect(client, args.output, classifier=classifier, cube_host=args.host, single_step=args.single_step)
         else:
             _run_ui_collect(client, args.output)
     finally:
