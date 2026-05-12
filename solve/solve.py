@@ -176,9 +176,9 @@ def main():
         print(f"Solution: {solution}")
         moves = parse_moves(solution)
     else:
-        move_strs = [str(m) for m in solution]
-        print(f"Solution: {' '.join(move_strs)}")
-        moves = parse_moves(solution)
+        move_str = solution.get("solution", "")
+        print(f"Solution: {move_str}")
+        moves = parse_moves(move_str)
 
     names = ['U','R','F','D','L','B']
     move_strs = [names[m['face']] + ({0: '', 1: "'", 2: '2'}[m['dir']]) for m in moves]
