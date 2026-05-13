@@ -37,9 +37,9 @@ logger = logging.getLogger(__name__)
 class Controller:
     """主控制器 —— 编排各独立任务"""
 
-    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None):
-        self.recipe = RecipeLoader()
-        self.scrcpy = ScrcpyClient(max_width=0, bitrate=200_000_000)
+    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None, recipe_path: str | None = None):
+        self.recipe = RecipeLoader(recipe_path) if recipe_path else RecipeLoader()
+        self.scrcpy = ScrcpyClient(max_width=0, max_fps=5, bitrate=200_000_000)
         self.cube = CubeAPI(single_step=single_step)
         self.detector = Detector(self.recipe.recipe)
 
@@ -55,6 +55,8 @@ class Controller:
 
         self.mode: str = self.recipe.recipe.mode
         self._scramble_seen_move = False
+        self._no_scramble_cnt = 0
+        self._last_move = None
         self._running = False
         self._init_state()
         if initial_state is not None:
@@ -65,6 +67,8 @@ class Controller:
         if self.mode == "semi":
             self.state = "scramble"
         elif self.mode == "rank":
+            self.state = "init"
+        elif self.mode == "holder":
             self.state = "init"
         else:
             self.state = "wait_init"
@@ -123,9 +127,12 @@ class Controller:
         """轮询检测 UI 特征直到出现或超时。"""
         elapsed = 0.0
         last_log = 0.0
+        # cv2.namedWindow("frame", cv2.WINDOW_NORMAL)
         while elapsed < timeout:
             frame = self.scrcpy.last_frame
             if frame is not None:
+                # cv2.imshow("frame", frame)
+                # key = cv2.waitKey(1) & 0xFF
                 matched, center = self.detector.detect(frame, feature_name)
                 if matched:
                     return True, frame, center
@@ -138,6 +145,7 @@ class Controller:
                     last_log = elapsed
             await asyncio.sleep(0.5)
             elapsed += 0.5
+        # cv2.destroyAllWindows()
         return False, self.scrcpy.last_frame, None
 
     async def _click_feature(self, feature_name: str) -> bool:
@@ -182,14 +190,17 @@ async def _semi_scramble(self: Controller) -> str:
             logger.info("scramble: 识别=%s", moves)
             await self.move_queue.put(moves)
             self._scramble_seen_move = True
+            self._no_scramble_cnt = 0
         else:
             logger.debug("scramble: 分类=%s (无有效转动)", labels)
     else:
-        if not chars:
-            # 无气泡 = 打乱结束
+        self._no_scramble_cnt += 1
+        if not chars and self._no_scramble_cnt > 3:
+            # 无气泡持续3次以上 = 打乱结束
             if self._scramble_seen_move:
                 logger.info("scramble: 无字符区域且已下发过转动，进入 solve")
                 self._scramble_seen_move = False
+                self._no_scramble_cnt = 0
                 return "solve"
             logger.debug("scramble: 无字符区域，等待打乱出现...")
 
@@ -226,6 +237,7 @@ async def _rank_init(self: Controller) -> str:
     """检测并点击 begin_rank 按钮进入排位。"""
     logger.info("rank/init: 等待 begin_rank...")
     self._scramble_seen_move = False
+    self._no_scramble_cnt = 0
     ok, _, _ = await self._wait_for_ui("begin_rank", timeout=60.0)
     if ok:
         await self._click_feature("begin_rank")
@@ -244,6 +256,9 @@ async def _rank_scramble(self: Controller) -> str:
     if frame is None:
         await asyncio.sleep(0.5)
         return "scramble"
+    # cv2.namedWindow("frame", cv2.WINDOW_NORMAL)
+    # cv2.imshow("frame", self.scrcpy.last_frame)
+    # cv2.waitKey(1) & 0xFF
 
     feat = self.recipe.recipe.feature("scramble_area")
     if feat and feat.roi:
@@ -268,8 +283,10 @@ async def _rank_scramble(self: Controller) -> str:
                 cv2.imwrite(str(debug_dir / f"{ts}_{idx}.png"), char_img)
 
             moves = parse(labels)
-            if moves:
+            if moves and (self._last_move != moves or True):
                 self._scramble_seen_move = True
+                self._no_scramble_cnt = 0
+                self._last_move = moves
                 logger.info("rank/scramble: 帧=%d 分类=%s 识别=%s", ts, labels, moves)
                 await self.move_queue.put(moves)
             else:
@@ -277,9 +294,11 @@ async def _rank_scramble(self: Controller) -> str:
         await asyncio.sleep(1.0)
         return "scramble"
     else:
-        if self._scramble_seen_move:
+        self._no_scramble_cnt += 1
+        if self._scramble_seen_move and self._no_scramble_cnt > 3:
             logger.info("rank/scramble: 无字符区域，进入 solve")
             self._scramble_seen_move = False
+            self._no_scramble_cnt = 0
             await asyncio.sleep(1.0)
             return "solve"
         logger.debug("rank/scramble: 无字符区域，等待出现转动气泡...")
@@ -305,6 +324,8 @@ async def _rank_solve(self: Controller) -> str:
         logger.error("rank/solve 失败: %s", e, exc_info=True)
 
     self._scramble_seen_move = False
+    self._no_scramble_cnt = 0
+    self._last_move = None
     logger.info("rank/solve: 同时检测 scramble 和 end_rank...")
     elapsed = 0.0
     while elapsed < 180.0:
@@ -348,14 +369,82 @@ async def _rank_solve(self: Controller) -> str:
 async def _rank_re_rank(self: Controller) -> str:
     """检测并点击 re_rank 按钮，返回 scramble。"""
     self._scramble_seen_move = False
+    self._no_scramble_cnt = 0
     logger.info("rank/re_rank: 等待 re_rank...")
-    ok, _, center = await self._wait_for_ui("re_rank", timeout=30.0)
+    ok, _, center = await self._wait_for_ui("re_rank", timeout=5.0)
     if ok and center:
         logger.info("rank/re_rank: 点击 re_rank")
         self.scrcpy.tap(*center)
         await asyncio.sleep(2.0)
         return "scramble"
+    else:
+        # 说明直接被踢回init界面了
+        logger.info("rank/re_rank: 超时， 可能被踢回begin界面了")
+        ok, _, center = await self._wait_for_ui("begin_rank", timeout=5.0)
+        if ok and center:
+            logger.info("rank/re_rank: 检测到 begin_rank，点击")
+            self.scrcpy.tap(*center)
+            await asyncio.sleep(2.0)
+            return "scramble"
+        pass
     return "re_rank"
+
+
+# ======================================================================
+# Holder 模式：守擂赛
+#   init(begin_holder) → scramble → solve → re_holder → init
+# ======================================================================
+
+async def _holder_init(self: Controller) -> str:
+    """检测并点击 begin_holder 按钮进入擂台挑战。"""
+    logger.info("holder/init: 等待 begin_holder...")
+    self._scramble_seen_move = False
+    self._no_scramble_cnt = 0
+    ok, _, center = await self._wait_for_ui("begin_holder", timeout=60.0)
+    if ok and center:
+        logger.info("holder/init: 点击 begin_holder")
+        self.scrcpy.tap(*center)
+        await asyncio.sleep(2.0)
+        return "scramble"
+    return "init"
+
+
+async def _holder_scramble(self: Controller) -> str:
+    """与 rank scramble 逻辑相同：持续检测气泡 → 识别 → 下发 → 等待气泡消失。"""
+    return await _rank_scramble(self)
+
+
+async def _holder_solve(self: Controller) -> str:
+    """获取面片 → CFOP 求解 → 下发转动 → 等待 re_holder。"""
+    logger.info("holder/solve: 求解...")
+    facelets = await self.cube.get_facelets()
+    if not facelets or len(facelets) != 54:
+        await asyncio.sleep(1.0)
+        return "solve"
+
+    try:
+        result = solve_cfop(facelets)
+        solution = result["solution"]
+        logger.info("holder/solve: %s (%d步)", solution, len(solution.split()))
+        await self.move_queue.put(solution)
+    except Exception as e:
+        logger.error("holder/solve 失败: %s", e)
+
+    logger.info("holder/solve: 等待 re_holder...")
+    ok, _, center = await self._wait_for_ui("re_holder", timeout=120.0)
+    if ok and center:
+        logger.info("holder/solve: 点击 re_holder")
+        self.scrcpy.tap(*center)
+        await asyncio.sleep(2.0)
+        return "re_holder"
+    return "solve"
+
+
+async def _holder_re_holder(self: Controller) -> str:
+    """re_holder 点击后回到 init 等待下一把。"""
+    logger.info("holder/re_holder: 返回 init")
+    await asyncio.sleep(1.0)
+    return "init"
 
 
 # ======================================================================
@@ -383,6 +472,13 @@ def _get_handlers(mode: str) -> dict[str, any]:
             "scramble": _rank_scramble,
             "solve": _rank_solve,
             "re_rank": _rank_re_rank,
+        }
+    if mode == "holder":
+        return {
+            "init": _holder_init,
+            "scramble": _holder_scramble,
+            "solve": _holder_solve,
+            "re_holder": _holder_re_holder,
         }
     return {}
 
@@ -413,6 +509,7 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--recipe", default="example.json", help="recipe JSON 路径")
     parser.add_argument("--classifier", default="cnn",
                         choices=["knn", "template", "cnn", "hog_svm"],
                         help="分类器后端")
@@ -425,7 +522,7 @@ if __name__ == "__main__":
     classifier_config = {"type": args.classifier}
 
     async def main():
-        controller = Controller(classifier_config=classifier_config, single_step=args.single_step, initial_state=args.state)
+        controller = Controller(classifier_config=classifier_config, single_step=args.single_step, initial_state=args.state, recipe_path=args.recipe)
         if args.mock:
             from device.cube_api import MockCubeAPI
             controller.cube = MockCubeAPI()

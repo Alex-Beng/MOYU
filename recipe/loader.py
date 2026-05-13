@@ -26,7 +26,7 @@ class RecipeLoader:
     def __init__(self, path: str | Path | None = None):
         if path is None:
             path = RECIPES_DIR / "example.json"
-        self.path = Path(path)
+        self.path = RECIPES_DIR / Path(path)
         self.recipe: Recipe | None = None
         self._raw: dict = {}
         self.load()
