@@ -253,15 +253,16 @@ def train_cnn(data_dir: str, model_output: str):
             self.conv1 = nn.Conv2d(1, 16, 3, padding=1)
             self.conv2 = nn.Conv2d(16, 32, 3, padding=1)
             self.pool = nn.MaxPool2d(2, 2)
-            h, w = CHAR_SIZE[1] // 4, CHAR_SIZE[0] // 4
-            self.fc1 = nn.Linear(32 * h * w, 64)
-            self.fc2 = nn.Linear(64, num_classes)
+            self.dropout = nn.Dropout(0.3)
+            self.fc1 = nn.Linear(32 * (CHAR_SIZE[1]//4) * (CHAR_SIZE[0]//4), 512)
+            self.fc2 = nn.Linear(512, num_classes)
 
         def forward(self, x):
             x = self.pool(torch.relu(self.conv1(x)))
             x = self.pool(torch.relu(self.conv2(x)))
             x = x.view(x.size(0), -1)
             x = torch.relu(self.fc1(x))
+            x = self.dropout(x)
             x = self.fc2(x)
             return x
 
@@ -269,7 +270,14 @@ def train_cnn(data_dir: str, model_output: str):
     x = torch.tensor(features, dtype=torch.float32)
     y = torch.tensor(labels, dtype=torch.long)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    x = x.to(device)
+    y = y.to(device)
+
     model = SimpleCNN()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    logger.info("训练设备: %s", device)
     weights_path = Path(model_output).with_suffix(".pt")
 
     if weights_path.exists():
@@ -277,7 +285,7 @@ def train_cnn(data_dir: str, model_output: str):
         logger.info("从已有权重继续训练: %s", weights_path)
     else:
         logger.info("从头开始训练")
-    lr = 0.0001 if weights_path.exists() else 0.001
+    lr = 0.0004 if weights_path.exists() else 0.001
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -288,7 +296,7 @@ def train_cnn(data_dir: str, model_output: str):
     print(f"{'Epoch':>6}  {'Loss':>8}  {'Acc':>8}")
     print("-" * 24)
 
-    for epoch in range(80):
+    for epoch in range(100):
         model.train()
         optimizer.zero_grad()
         output = model(x)
@@ -299,7 +307,7 @@ def train_cnn(data_dir: str, model_output: str):
         print(f"{epoch:6d}  {loss.item():8.4f}  {acc:8.3f}")
 
     # 导出 ONNX
-    model.eval()
+    model.eval().to("cpu")
     model_path = Path(model_output)
     model_path.parent.mkdir(parents=True, exist_ok=True)
     dummy = torch.randn(1, 1, h, w)
@@ -311,6 +319,45 @@ def train_cnn(data_dir: str, model_output: str):
     # 保存权重供续训
     torch.save(model.state_dict(), str(weights_path))
     logger.info("CNN 权重已保存: %s", weights_path)
+
+    # 显示所有分类错误的图片
+    x_cpu = x.to("cpu")
+    y_cpu = y.to("cpu")
+    with torch.no_grad():
+        output = model.to("cpu")(x_cpu)
+        preds = output.argmax(dim=1).numpy()
+    gt_arr = labels
+    errors = [(i, preds[i], gt) for i, gt in enumerate(gt_arr) if preds[i] != gt]
+    if not errors:
+        logger.info("全部正确，无错误图片")
+        return
+
+    cols = min(len(errors), 4)
+    tile_h, tile_w = CHAR_SIZE[0] * 5, CHAR_SIZE[1] * 5
+    rows = (len(errors) + cols - 1) // cols
+    grid = np.zeros((rows * tile_h, cols * tile_w, 3), dtype=np.uint8) + 40
+    for idx, (sample_idx, pred, gt_label) in enumerate(errors):
+        r, c = idx // cols, idx % cols
+        img = (features[sample_idx].reshape(h, w) * 255).astype(np.uint8)
+        img_color = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        resized = cv2.resize(img_color, (tile_w, tile_h))
+        pred_label = LABELS[pred] if pred < len(LABELS) else "?"
+        true_label = LABELS[gt_label]
+        y0, x0 = r * tile_h, c * tile_w
+        grid[y0:y0+tile_h, x0:x0+tile_w] = resized
+        cv2.rectangle(grid, (x0, y0), (x0+tile_w, y0+40), (0, 0, 255), -1)
+        cv2.putText(grid, f"pred={pred_label} true={true_label}", (x0+8, y0+28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+    win_name = f"错误分类 ({len(errors)}/{len(gt_arr)})"
+    cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
+    cv2.imshow(win_name, grid)
+    save_path = Path(model_output).with_suffix(".errors.png")
+    cv2.imwrite(str(save_path), grid)
+    logger.info("错误图片已保存: %s", save_path)
+    logger.info("显示 %d 个错误样本，按任意键关闭...", len(errors))
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
 
 # ------------------------------------------------------------------

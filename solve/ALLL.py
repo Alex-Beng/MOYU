@@ -1355,7 +1355,6 @@ U z U2' R U (R U' R' U') (R' U' R U') z'"
 (↑R' U R' U') (R D' R' D)·R' UD' (R2 U' R2' D) R2
 U (↓R U' R U) (R' D R D') R U'D R2' U R2 D' R2'
 U2 (R' U' F'S U F2 U' B') (R2 U' R' D R' U) z'
- (R' U2' R U2) L U' R' U z U' R U R' D R U' z' = (R' U2' R U2) L U' R' U (L' U L U') R U L'
 (R' U R U') R' f' U' (R U2 R' U' R U') R' f R
 U' (F U' F U) (L F L2 U L U') (L F' L' F')
 U2 R b (R' U' R U' R' U2 R) U' b' R' U' R U R'"

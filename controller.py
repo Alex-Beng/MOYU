@@ -168,7 +168,8 @@ async def _semi_scramble(self: Controller) -> str:
         x, y, w, h = feat.roi
         crop = frame[y:y+h, x:x+w]
     else:
-        crop = frame
+        mid = frame.shape[0] // 2
+        crop = frame[mid:, :]
 
     chars = segment(crop)
     if chars and self.classifier:
@@ -247,7 +248,8 @@ async def _rank_scramble(self: Controller) -> str:
         x, y, w, h = feat.roi
         crop = frame[y:y+h, x:x+w]
     else:
-        crop = frame
+        mid = frame.shape[0] // 2
+        crop = frame[mid:, :]
 
     chars = segment(crop)
     if chars:
@@ -322,9 +324,11 @@ async def _rank_solve(self: Controller) -> str:
             x, y, w, h = feat.roi
             crop = frame[y:y+h, x:x+w]
         else:
-            crop = frame
+            mid = frame.shape[0] // 2
+            crop = frame[mid:, :]
         chars = segment(crop)
         if chars:
+            logger.debug("rank/solve: 检测到 %d 个字符区域", len(chars))
             logger.debug("rank/solve: 检测到 %d 个字符区域", len(chars))
             if self.classifier:
                 char_imgs = [c[0] for c in chars]
@@ -390,7 +394,7 @@ if __name__ == "__main__":
 
     示例：
         python controller.py                                    # 按 recipe mode 运行
-        python controller.py --classifier cnn --host 192.168.50.246
+        python controller.py --classifier cnn --host 192.168.50.246 --single-step
     """
     import argparse
     from pathlib import Path
