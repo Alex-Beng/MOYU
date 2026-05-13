@@ -27,17 +27,36 @@ main.py → asyncio.run(main())
 
 ### 状态机流程
 
+状态机按 `mode` 分别定义，通过 `_get_handlers(mode)` 路由到对应的 handler 表。
+
+**semi 模式**（人类操作 UI，AI 只负责 OCR + solve）
+
 ```
-wait_init → init → scramble → solve → reinit → init ...
+scramble ──(识别完成)──▶ solve ──(下发完成)──▶ scramble
 ```
 
 | state | description |
 |----------|-------------|
-| wait_init | 等待手机与 ESP 连接；电脑与 ESP 及手机连接 |
-| init | 检测 UI 状态，开启匹配，等待打乱 UI 出现 |
-| scramble | OCR 识别打乱序列，直至打乱 UI 消失 |
-| solve | 电脑求解并下发转动，等待打乱 UI 出现 or 结算 UI |
-| reinit | 点击各种结算 UI，直至 init |
+| scramble | OCR 识别打乱序列气泡，下发转动；无气泡且已下发过则进入 solve |
+| solve | 获取面片 → CFOP 求解 → 下发转动，完成后回到 scramble |
+
+**rank 模式**（全自动排位赛）
+
+```
+init ──(点击begin_rank)──▶ scramble ──(气泡消失)──▶ solve
+ ▲                                                      │
+ │                   re_rank ◀──(检测到end_rank)────────┘
+ └──────────────(点击re_rank)──────────────────────────┘
+```
+
+| state | description |
+|----------|-------------|
+| init | 等待并点击 begin_rank 按钮，进入排位 |
+| scramble | OCR 识别打乱气泡并下发；无气泡且已下发过则进入 solve |
+| solve | 求解并下发转动；同时检测 end_rank 或新一轮 scramble |
+| re_rank | 等待并点击 re_rank 按钮，回到 scramble |
+
+**新增 mode**：在 `controller.py` 末尾添加对应的 `async def _<mode>_<state>` handler 函数，并在 `_get_handlers()` 中注册 `{state: handler}` 字典。同时在 `_init_state()` 中为新 mode 设置默认初始状态。Controller 主体无需改动。
 
 流程控制全部在 Controller 代码中，Recipe 只负责 UI 特征描述。
 
@@ -235,7 +254,9 @@ python -c "from recipe.loader import RecipeLoader; r = RecipeLoader(); print(r.r
 ## 启动
 
 ```bash
-python main.py
+python controller.py                        # 按 recipe mode 运行
+python controller.py --state scramble       # 指定初始状态（跳过默认起点）
+python controller.py --classifier cnn --single-step
 ```
 
-状态机默认从 `wait_init` 开始，需确保 ESP32 已启动且手机已通过 ADB 连接。
+状态机默认初始状态由 mode 决定（semi → scramble，rank → init），需确保 ESP32 已启动且手机已通过 ADB 连接。

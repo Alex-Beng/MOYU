@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 class Controller:
     """主控制器 —— 编排各独立任务"""
 
-    def __init__(self, classifier_config: dict | None = None, single_step: bool = False):
+    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None):
         self.recipe = RecipeLoader()
         self.scrcpy = ScrcpyClient(max_width=0, bitrate=200_000_000)
         self.cube = CubeAPI(single_step=single_step)
@@ -57,6 +57,8 @@ class Controller:
         self._scramble_seen_move = False
         self._running = False
         self._init_state()
+        if initial_state is not None:
+            self.state = initial_state
         logger.info("Controller 初始化, mode=%s, state=%s", self.mode, self.state)
 
     def _init_state(self):
@@ -417,12 +419,13 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="192.168.50.246", help="ESP32 IP")
     parser.add_argument("--mock", action="store_true", help="Mock 测试")
     parser.add_argument("--single-step", action="store_true", help="逐步下发转动 (debug)")
+    parser.add_argument("--state", default=None, help="指定初始状态 (覆盖 mode 默认值，如 scramble/solve/re_rank)")
     args = parser.parse_args()
 
     classifier_config = {"type": args.classifier}
 
     async def main():
-        controller = Controller(classifier_config=classifier_config, single_step=args.single_step)
+        controller = Controller(classifier_config=classifier_config, single_step=args.single_step, initial_state=args.state)
         if args.mock:
             from device.cube_api import MockCubeAPI
             controller.cube = MockCubeAPI()

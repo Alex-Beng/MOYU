@@ -1378,14 +1378,17 @@ def recognize_oll(state: 'CubieCube', oll_rec):
 
 
 def recognize_pll(state: 'CubieCube', pll_rec):
-    cp_key = tuple(state.cp[i] for i in range(4))
-    ep_key = tuple(state.ep[i] for i in range(4))
-    key = (cp_key, ep_key)
-    if key in pll_rec:
-        name, alg = pll_rec[key]
-        if name == 'skip':
-            return 'skip', ''
-        return name, alg
+    for auf in range(4):
+        test = state.apply_u_rot(auf)
+        cp_key = tuple(test.cp[i] for i in range(4))
+        ep_key = tuple(test.ep[i] for i in range(4))
+        key = (cp_key, ep_key)
+        if key in pll_rec:
+            name, alg = pll_rec[key]
+            auf_str = {0: '', 1: 'U', 2: 'U2', 3: "U'"}[auf]
+            if name == 'skip':
+                return 'skip', auf_str
+            return name, (auf_str + ' ' + alg).strip()
     return None, None
 
 
@@ -1404,41 +1407,41 @@ def solve_oll(state, oll_rec):
 
 
 def solve_pll(state: 'CubieCube', pll_rec):
-    result = recognize_pll(state, pll_rec)
-    name, alg = result
-    _dbg(f"DEBUG: PLL recognized={name}")
+    name, alg = recognize_pll(state, pll_rec)
+    _dbg(f"DEBUG: PLL recognized={name} alg={alg}")
     if name is None:
         _dbg(f"DEBUG: PLL not recognized, cp={tuple(state.cp[:4])} ep={tuple(state.ep[:4])}")
         return None, state
-    full = alg if name != 'skip' else ''
-    if full:
-        state = apply_alg_str(state, full)
-    return full, state
+    if alg:
+        state = apply_alg_str(state, alg)
+    return alg, state
 
 
 def recognize_alll(state: 'CubieCube', alll_rec):
-    cp_key = tuple(state.cp[i] for i in range(4))
-    co_key = tuple(state.co[i] for i in range(4))
-    ep_key = tuple(state.ep[i] for i in range(4))
-    eo_key = tuple(state.eo[i] for i in range(4))
-    key = (cp_key, co_key, ep_key, eo_key)
-    if key in alll_rec:
-        name, alg = alll_rec[key]
-        if name == 'skip':
-            return 'skip', ''
-        return name, alg
+    for auf in range(4):
+        test = state.apply_u_rot(auf)
+        cp_key = tuple(test.cp[i] for i in range(4))
+        co_key = tuple(test.co[i] for i in range(4))
+        ep_key = tuple(test.ep[i] for i in range(4))
+        eo_key = tuple(test.eo[i] for i in range(4))
+        key = (cp_key, co_key, ep_key, eo_key)
+        if key in alll_rec:
+            name, alg = alll_rec[key]
+            auf_str = {0: '', 1: 'U', 2: 'U2', 3: "U'"}[auf]
+            if name == 'skip':
+                return 'skip', auf_str
+            return name, (auf_str + ' ' + alg).strip()
     return None, None
 
 
 def solve_alll(state: 'CubieCube', alll_rec):
     name, alg = recognize_alll(state, alll_rec)
-    _dbg(f"DEBUG: ALLL recognized={name}")
+    _dbg(f"DEBUG: ALLL recognized={name} alg={alg}")
     if name is None:
         return None, state
-    full = alg if name != 'skip' else ''
-    if full:
-        state = apply_alg_str(state, full)
-    return full, state
+    if alg:
+        state = apply_alg_str(state, alg)
+    return alg, state
 
 
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.cfop_cache.pkl')
@@ -1552,8 +1555,9 @@ class CFOPSolver:
             return {
                 'cross': '',
                 'f2l': '',
-                'oll': '',
-                'pll': '',
+                'oll': None,
+                'pll': None,
+                'alll': None,
                 'solution': '',
             }
 
@@ -1584,10 +1588,10 @@ class CFOPSolver:
             if alll_str is not None:
                 alll_found = True
                 _dbg(f"DEBUG: ALLL found, alg={alll_str}")
+            else:
+                _dbg("DEBUG: ALLL not found, falling back to OLL+PLL")
 
         if not alll_found:
-            # Fall back to OLL + PLL
-            _dbg("DEBUG: ALLL not found, falling back to OLL+PLL")
             oll_str, state = solve_oll(state, OLL_RECOGNITION)
             if oll_str is None:
                 _dbg("DEBUG: oll failed")
@@ -1640,10 +1644,10 @@ class CFOPSolver:
         }
         if alll_found:
             result['alll'] = alll_str
-            result['oll'] = ''
-            result['pll'] = ''
+            result['oll'] = None
+            result['pll'] = None
         else:
-            result['alll'] = ''
+            result['alll'] = None
             result['oll'] = oll_str
             result['pll'] = pll_str
         return result
@@ -1692,7 +1696,7 @@ def main():
         sys.exit(1)
     print(f"Cross: {result['cross']}")
     print(f"F2L: {result['f2l']}")
-    alll_hit = bool(result.get('alll'))
+    alll_hit = result.get('alll') is not None
     if not alll_hit:
         print(f"OLL: {result['oll']}")
         print(f"PLL: {result['pll']}")
