@@ -73,7 +73,7 @@ def _run_ocr_collect(client: ScrcpyClient, output_dir: str, classifier: Classifi
 
     print("\n=== OCR 字符样本采集 ===")
     if classifier:
-        print("  模型辅助: CNN 预判, [2]确认  [其他键]纠正")
+        print("  模型辅助: CNN 预判, [回车]确认  [其他键]纠正")
     print("按键说明:")
     print("  SPACE    截取当前帧并分割字符")
     print("  [i]=R    [k]=R'   [,]=R2   [8]=R2'")
@@ -365,7 +365,7 @@ def main():
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
-    client = ScrcpyClient(serial=args.serial, max_fps=30, max_width=0, bitrate=200_000_000)
+    client = ScrcpyClient(serial=args.serial, max_fps=15, max_width=0, bitrate=200_000_000)
     client.connect()
 
     classifier = None

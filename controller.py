@@ -32,14 +32,14 @@ import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
-
+DEBUG = False
 
 class Controller:
     """主控制器 —— 编排各独立任务"""
 
     def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None, recipe_path: str | None = None):
         self.recipe = RecipeLoader(recipe_path) if recipe_path else RecipeLoader()
-        self.scrcpy = ScrcpyClient(max_width=0, max_fps=5, bitrate=200_000_000)
+        self.scrcpy = ScrcpyClient(max_width=0, max_fps=10, bitrate=200_000_000)
         self.cube = CubeAPI(single_step=single_step)
         self.detector = Detector(self.recipe.recipe)
 
@@ -127,12 +127,14 @@ class Controller:
         """轮询检测 UI 特征直到出现或超时。"""
         elapsed = 0.0
         last_log = 0.0
-        # cv2.namedWindow("frame", cv2.WINDOW_NORMAL)
+        if DEBUG:
+            cv2.namedWindow("frame", cv2.WINDOW_NORMAL)
         while elapsed < timeout:
             frame = self.scrcpy.last_frame
             if frame is not None:
-                # cv2.imshow("frame", frame)
-                # key = cv2.waitKey(1) & 0xFF
+                if DEBUG:
+                    cv2.imshow("frame", frame)
+                    key = cv2.waitKey(1) & 0xFF
                 matched, center = self.detector.detect(frame, feature_name)
                 if matched:
                     return True, frame, center
@@ -195,7 +197,7 @@ async def _semi_scramble(self: Controller) -> str:
             logger.debug("scramble: 分类=%s (无有效转动)", labels)
     else:
         self._no_scramble_cnt += 1
-        if not chars and self._no_scramble_cnt > 3:
+        if not chars and self._no_scramble_cnt > 1:
             # 无气泡持续3次以上 = 打乱结束
             if self._scramble_seen_move:
                 logger.info("scramble: 无字符区域且已下发过转动，进入 solve")
@@ -256,9 +258,10 @@ async def _rank_scramble(self: Controller) -> str:
     if frame is None:
         await asyncio.sleep(0.5)
         return "scramble"
-    # cv2.namedWindow("frame", cv2.WINDOW_NORMAL)
-    # cv2.imshow("frame", self.scrcpy.last_frame)
-    # cv2.waitKey(1) & 0xFF
+    if DEBUG:
+        cv2.namedWindow("frame", cv2.WINDOW_NORMAL)
+        cv2.imshow("frame", self.scrcpy.last_frame)
+        cv2.waitKey(1) & 0xFF
 
     feat = self.recipe.recipe.feature("scramble_area")
     if feat and feat.roi:
@@ -295,7 +298,7 @@ async def _rank_scramble(self: Controller) -> str:
         return "scramble"
     else:
         self._no_scramble_cnt += 1
-        if self._scramble_seen_move and self._no_scramble_cnt > 3:
+        if self._scramble_seen_move and self._no_scramble_cnt > 1:
             logger.info("rank/scramble: 无字符区域，进入 solve")
             self._scramble_seen_move = False
             self._no_scramble_cnt = 0
@@ -341,6 +344,13 @@ async def _rank_solve(self: Controller) -> str:
             self.scrcpy.tap(*center_end)
             await asyncio.sleep(2.0)
             return "re_rank"
+        
+        matched_end, center_end = self.detector.detect(frame, "re_rank")
+        if matched_end and center_end:
+            logger.info("rank/solve: 检测到 re_rank，点击")
+            self.scrcpy.tap(*center_end)
+            await asyncio.sleep(2.0)
+            return "scramble"
 
         feat = self.recipe.recipe.feature("scramble_area")
         if feat and feat.roi:
