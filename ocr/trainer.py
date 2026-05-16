@@ -209,8 +209,8 @@ def train_knn(data_dir: str, model_output: str):
             correct += 1
         else:
             error_list.append((i, LABELS[pred_i], LABELS[y[i]]))
-    acc = correct / len(labels) if labels else 0
-    logger.info("KNN 准确率: %d/%d = %.2f%%", correct, len(labels), acc * 100)
+    acc = correct / len(y) if len(y) else 0
+    logger.info("KNN 准确率: %d/%d = %.2f%%", correct, len(y), acc * 100)
     if error_list:
         logger.info("分类错误: %s", "  ".join(f"{i}:pred={p} true={t}" for i, p, t in error_list[:20]))
         if len(error_list) > 20:
