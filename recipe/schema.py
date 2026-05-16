@@ -94,7 +94,7 @@ def validate(d: dict):
     dev = d["device"]
     if "width" not in dev or "height" not in dev:
         raise ValueError("device 必须包含 width 和 height")
-    if d.get("mode") not in (None, "semi", "rank", "holder", "team"):
+    if d.get("mode") not in (None, "semi", "rank", "holder", "team", "week", "remote"):
         raise ValueError(f"不支持的 mode: {d.get('mode')}")
     for feat_name, feat in d.get("ui", {}).items():
         if "template" not in feat:

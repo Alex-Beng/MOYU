@@ -80,9 +80,11 @@ def segment(frame: np.ndarray) -> list[tuple[np.ndarray, tuple[int, int, int]]]:
         char_img = crop_circle(frame, cx, cy, r)
         result.append((char_img, (cx, cy, r)))
         if True: # 尝试添加右侧相同大小区域，用于预测
-            if cx + r + r < frame.shape[1]:
-                char_img_next = crop_circle(frame, cx+r+r, cy, r)
-                result.append((char_img_next, (cx+r+r, cy, r)))
+            for i in range(2):
+                nx = int(cx + 2.35*r*(i+1))
+                if nx < frame.shape[1]:
+                    char_img_next = crop_circle(frame, nx, cy, r)
+                    result.append((char_img_next, (nx, cy, r)))
 
     logger.debug("检测到 %d 个圆形气泡", len(result))
     return result

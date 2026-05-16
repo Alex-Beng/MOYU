@@ -1,0 +1,28 @@
+{
+    "name": "xiaomi 13 rank",
+    "mode": "remote",
+    "device": {
+        "width": 1080,
+        "height": 2400
+    },
+    "ui": {
+        "begin_rank": {
+            "template": "../../templates/begin_rank.png",
+            "roi": null,
+            "threshold": 0.85,
+            "desc": "开始排位按钮"
+        },
+        "end_rank": {
+            "template": "../../templates/end_rank.png",
+            "roi": null,
+            "threshold": 0.80,
+            "desc": "结算确认按钮"
+        },
+        "re_rank": {
+            "template": "../../templates/re_rank.png",
+            "roi": null,
+            "threshold": 0.85,
+            "desc": "再来一局按钮"
+        }
+    }
+}

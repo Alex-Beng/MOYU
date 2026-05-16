@@ -70,6 +70,12 @@ class Controller:
             self.state = "init"
         elif self.mode == "holder":
             self.state = "init"
+        elif self.mode == "team":
+            self.state = "init"
+        elif self.mode == "week":
+            self.state = "init"
+        elif self.mode == "remote":
+            self.state = "scramble"
         else:
             self.state = "wait_init"
 
@@ -163,6 +169,7 @@ class Controller:
         return False
 
 
+#region semi
 # ======================================================================
 # Semi 模式：人类操作 UI，AI 只负责 scramble OCR + solve
 # ======================================================================
@@ -228,8 +235,9 @@ async def _semi_solve(self: Controller) -> str:
     except Exception as e:
         logger.error("semi/solve 失败: %s", e, exc_info=True)
     return "scramble"
+#endregion
 
-
+#region rank
 # ======================================================================
 # Rank 模式：全自动排位赛
 #   init(begin_rank) → scramble(segment循环) → solve → end_rank → re_rank → scramble
@@ -395,13 +403,12 @@ async def _rank_re_rank(self: Controller) -> str:
             logger.info("rank/re_rank: 检测到 begin_rank，点击")
             self.scrcpy.tap(*center)
             await asyncio.sleep(2.0)
-            return "scramble"
-        pass
     return "re_rank"
+#endregion
 
-
+#region holder
 # ======================================================================
-# Holder 模式：守擂赛
+# Holder 模式：擂台赛
 #   init(begin_holder) → scramble → solve → re_holder → init
 # ======================================================================
 
@@ -455,7 +462,218 @@ async def _holder_re_holder(self: Controller) -> str:
     logger.info("holder/re_holder: 返回 init")
     await asyncio.sleep(1.0)
     return "init"
+#endregion holder
 
+#region team
+# ======================================================================
+# Team 模式：战队赛
+#   init(begin_holder) → scramble → solve → re_holder → init
+# ======================================================================
+
+async def _team_init(self: Controller) -> str:
+    """检测并点击 begin_team 按钮进入战队赛。"""
+    logger.info("team/init: 等待 begin_team...")
+    self._scramble_seen_move = False
+    self._no_scramble_cnt = 0
+    ok, _, _ = await self._wait_for_ui("begin_team", timeout=10.0)
+    if ok:
+        await self._click_feature("begin_team")
+        await asyncio.sleep(2.0)
+        return "scramble"
+    return "init"
+
+async def _team_scramble(self: Controller) -> str:
+    """与 rank scramble 逻辑相同：持续检测气泡 → 识别 → 下发 → 等待气泡消失。"""
+    return await _rank_scramble(self)
+
+async def _team_solve(self: Controller) -> str:
+    """获取面片 → CFOP 求解 → 下发转动 → 等待 re_holder。"""
+    logger.info("team/solve: 求解...")
+    facelets = await self.cube.get_facelets()
+    if not facelets or len(facelets) != 54:
+        await asyncio.sleep(1.0)
+        return "solve"
+
+    try:
+        result = solve_cfop(facelets)
+        solution = result["solution"]
+        logger.info("team/solve: %s (%d步)", solution, len(solution.split()))
+        await self.move_queue.put(solution)
+    except Exception as e:
+        logger.error("team/solve 失败: %s", e)
+
+    logger.info("team/solve: 同时检测 scramble 和 continue_team 和 re_team...")
+    elapsed = 0.0
+    while elapsed < 180.0:
+        frame = self.scrcpy.last_frame
+        if frame is None:
+            await asyncio.sleep(0.5)
+            elapsed += 0.5
+            continue
+
+        matched_end, center_end = self.detector.detect(frame, "continue_team")
+        if matched_end and center_end:
+            logger.info("team/solve: 检测到 continue_team，点击")
+            self.scrcpy.tap(*center_end)
+            await asyncio.sleep(2.0)
+            return "re_team"
+        
+        matched_end, center_end = self.detector.detect(frame, "re_team")
+        if matched_end and center_end:
+            logger.info("team/solve: 检测到 re_team ，点击")
+            self.scrcpy.tap(*center_end)
+            await asyncio.sleep(2.0)
+            return "init"
+
+        feat = self.recipe.recipe.feature("scramble_area")
+        if feat and feat.roi:
+            x, y, w, h = feat.roi
+            crop = frame[y:y+h, x:x+w]
+        else:
+            mid = frame.shape[0] // 2
+            crop = frame[mid:, :]
+        chars = segment(crop)
+        if chars:
+            logger.debug("team/solve: 检测到 %d 个字符区域", len(chars))
+            logger.debug("team/solve: 检测到 %d 个字符区域", len(chars))
+            if self.classifier:
+                char_imgs = [c[0] for c in chars]
+                labels = self.classifier.predict_batch(char_imgs)
+                moves = parse(labels)
+                if moves:
+                    self._scramble_seen_move = True
+                    logger.info("team/solve: 检测到新打乱，回到 scramble")
+                    return "scramble"
+        await asyncio.sleep(0.5)
+        elapsed += 0.5
+    return "solve"
+
+async def _team_re_team(self: Controller) -> str:
+    """检测并点击 re_team 返回战队赛开始界面。"""
+    logger.info("team/init: 等待 re_team...")
+    self._scramble_seen_move = False
+    self._no_scramble_cnt = 0
+    ok, _, _ = await self._wait_for_ui("re_team", timeout=60.0)
+    await asyncio.sleep(2.0)
+    if ok:
+        await self._click_feature("re_team")
+        await asyncio.sleep(2.0)
+        return "init"
+    return "re_team"
+#endregion
+
+#region week
+# ======================================================================
+# Week 模式：周赛
+#   init(begin_team) → scramble → solve → continue_week/re_week → init
+# ======================================================================
+
+async def _week_init(self: Controller) -> str:
+    """检测并点击 begin_team 按钮进入周赛。"""
+    logger.info("week/init: 等待 begin_team...")
+    self._scramble_seen_move = False
+    self._no_scramble_cnt = 0
+    ok, _, _ = await self._wait_for_ui("begin_team", timeout=10.0)
+    if ok:
+        await self._click_feature("begin_team")
+        await asyncio.sleep(2.0)
+        return "scramble"
+    return "init"
+
+
+async def _week_scramble(self: Controller) -> str:
+    """与 rank scramble 逻辑相同：持续检测气泡 → 识别 → 下发 → 等待气泡消失。"""
+    return await _rank_scramble(self)
+
+
+async def _week_solve(self: Controller) -> str:
+    """获取面片 → CFOP 求解 → 下发转动 → 同时检测 scramble 和 continue_week 和 re_week。"""
+    logger.info("week/solve: 求解...")
+    facelets = await self.cube.get_facelets()
+    if not facelets or len(facelets) != 54:
+        await asyncio.sleep(1.0)
+        return "solve"
+
+    try:
+        result = solve_cfop(facelets)
+        solution = result["solution"]
+        logger.info("week/solve: %s (%d步)", solution, len(solution.split()))
+        await self.move_queue.put(solution)
+    except Exception as e:
+        logger.error("week/solve 失败: %s", e)
+
+    logger.info("week/solve: 同时检测 scramble 和 continue_week 和 re_week...")
+    elapsed = 0.0
+    while elapsed < 180.0:
+        frame = self.scrcpy.last_frame
+        if frame is None:
+            await asyncio.sleep(0.5)
+            elapsed += 0.5
+            continue
+
+        matched_end, center_end = self.detector.detect(frame, "continue_week")
+        if matched_end and center_end:
+            logger.info("week/solve: 检测到 continue_week，点击")
+            await asyncio.sleep(1.0)
+            self.scrcpy.tap(*center_end)
+            return "re_week"
+
+        matched_end, center_end = self.detector.detect(frame, "re_week")
+        if matched_end and center_end:
+            logger.info("week/solve: 检测到 re_week，点击")
+            self.scrcpy.tap(*center_end)
+            await asyncio.sleep(2.0)
+            return "init"
+
+        feat = self.recipe.recipe.feature("scramble_area")
+        if feat and feat.roi:
+            x, y, w, h = feat.roi
+            crop = frame[y:y+h, x:x+w]
+        else:
+            mid = frame.shape[0] // 2
+            crop = frame[mid:, :]
+        chars = segment(crop)
+        if chars:
+            logger.debug("week/solve: 检测到 %d 个字符区域", len(chars))
+            if self.classifier:
+                char_imgs = [c[0] for c in chars]
+                labels = self.classifier.predict_batch(char_imgs)
+                moves = parse(labels)
+                if moves:
+                    self._scramble_seen_move = True
+                    logger.info("week/solve: 检测到新打乱，回到 scramble")
+                    return "scramble"
+        await asyncio.sleep(0.5)
+        elapsed += 0.5
+    return "solve"
+
+
+async def _week_re_week(self: Controller) -> str:
+    """检测并点击 re_week 返回周赛开始界面。"""
+    logger.info("week/re_week: 等待 re_week...")
+    self._scramble_seen_move = False
+    self._no_scramble_cnt = 0
+    ok, _, _ = await self._wait_for_ui("re_week", timeout=60.0)
+    if ok:
+        await self._click_feature("re_week")
+        await asyncio.sleep(2.0)
+        return "init"
+    return "re_week"
+#endregion
+
+
+#region remote
+# ======================================================================
+# remote 模式：vrc手动复原
+#   scramble
+# ======================================================================
+
+async def _remote_scramble(self: Controller) -> str:
+    """与 rank scramble 逻辑相同：持续检测气泡 → 识别 → 下发 → 等待气泡消失。"""
+    _  = await _rank_scramble(self)
+    return "scramble"
+
+#endremote
 
 # ======================================================================
 # 默认 handler（空操作）
@@ -489,6 +707,24 @@ def _get_handlers(mode: str) -> dict[str, any]:
             "scramble": _holder_scramble,
             "solve": _holder_solve,
             "re_holder": _holder_re_holder,
+        }
+    if mode == "team":
+        return {
+            "init": _team_init,
+            "scramble": _team_scramble,
+            "solve": _team_solve,
+            "re_team": _team_re_team,
+        }
+    if mode == "week":
+        return {
+            "init": _week_init,
+            "scramble": _week_scramble,
+            "solve": _week_solve,
+            "re_week": _week_re_week,
+        }
+    if mode == "remote":
+        return {
+            "scramble": _remote_scramble,
         }
     return {}
 

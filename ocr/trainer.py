@@ -193,6 +193,29 @@ def train_knn(data_dir: str, model_output: str):
         pickle.dump({"features": features, "labels": labels}, f)
     logger.info("KNN 模型已保存: %s (%d 样本，%d 类)", model_path, len(labels), len(set(labels)))
 
+    # 全量准确率验证（留一法）
+    correct = 0
+    error_list = []
+    x = np.array(features, dtype=np.float32)
+    y = np.array(labels, dtype=np.int32)
+    for i in range(len(x)):
+        if i % 50 == 0:
+            logger.info("验证中: %d/%d", i, len(x))
+        dists = np.sum((x - x[i]) ** 2, axis=1)
+        dists[i] = np.inf
+        nearest = np.argmin(dists)
+        pred_i = y[nearest]
+        if pred_i == y[i]:
+            correct += 1
+        else:
+            error_list.append((i, LABELS[pred_i], LABELS[y[i]]))
+    acc = correct / len(labels) if labels else 0
+    logger.info("KNN 准确率: %d/%d = %.2f%%", correct, len(labels), acc * 100)
+    if error_list:
+        logger.info("分类错误: %s", "  ".join(f"{i}:pred={p} true={t}" for i, p, t in error_list[:20]))
+        if len(error_list) > 20:
+            logger.info("  ... 共 %d 个错误", len(error_list))
+
 
 # ------------------------------------------------------------------
 # 导出模板（用于模板匹配分类器）
@@ -296,7 +319,7 @@ def train_cnn(data_dir: str, model_output: str):
     print(f"{'Epoch':>6}  {'Loss':>8}  {'Acc':>8}")
     print("-" * 24)
 
-    for epoch in range(100):
+    for epoch in range(20):
         model.train()
         optimizer.zero_grad()
         output = model(x)
@@ -412,6 +435,17 @@ def train_hog_svm(data_dir: str, model_output: str):
     model_path.parent.mkdir(parents=True, exist_ok=True)
     svm.save(str(model_path))
     logger.info("HOG+SVM 模型已保存: %s (%d 样本)", model_path, len(labels))
+
+    _, result = svm.predict(x)
+    preds = result.flatten().astype(np.int32)
+    correct = int((preds == y).sum())
+    acc = correct / len(y) if len(y) else 0
+    error_list = [(i, LABELS[int(preds[i])], LABELS[int(y[i])]) for i in range(len(y)) if preds[i] != y[i]]
+    logger.info("HOG+SVM 准确率: %d/%d = %.2f%%", correct, len(y), acc * 100)
+    if error_list:
+        logger.info("分类错误: %s", "  ".join(f"{i}:pred={p} true={t}" for i, p, t in error_list[:20]))
+        if len(error_list) > 20:
+            logger.info("  ... 共 %d 个错误", len(error_list))
 
 
 # ------------------------------------------------------------------

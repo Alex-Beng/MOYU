@@ -429,5 +429,5 @@ python -m tools.collect_training_data ocr --model ocr/cnn_model.onnx --host 192.
 python -m tools.collect_training_data ocr --model ocr/hog_svm_model.pkl --host  192.168.50.246
 
 # ui 收集
-python -m tools.collect_training_data ui --output templates/ --host  192.168.50.246
+python -m tools.collect_training_data ui --output templates/ 
 """
