@@ -17,7 +17,7 @@ CHAR_SIZE = (64, 64)
 # HoughCircles 参数（可根据实际屏幕调整）
 HOUGH_DP = 1.0
 HOUGH_MIN_DIST = 123       # 相邻圆心最小距离（像素）
-HOUGH_PARAM1 = 66         # Canny 高阈值
+HOUGH_PARAM1 = 30         # Canny 高阈值
 HOUGH_PARAM2 = 22         # 圆心检测累加器阈值，越小检测到越多（可能有假阳）
 HOUGH_MIN_RADIUS = 51
 HOUGH_MAX_RADIUS = 60

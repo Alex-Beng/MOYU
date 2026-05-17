@@ -87,7 +87,7 @@ class CubeAPI:
     ESP32 AP 模式默认 192.168.4.1。
     """
 
-    def __init__(self, host: str = "192.168.4.1", port: int = 80, timeout: float = 5.0, single_step: bool = False):
+    def __init__(self, host: str = "192.168.4.1", port: int = 80, timeout: float = 7.0, single_step: bool = False):
         self.base_url = f"http://{host}:{port}"
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.single_step = single_step
@@ -112,7 +112,7 @@ class CubeAPI:
             return {}
         url = f"{self.base_url}{path}"
         body = kwargs.get("json")
-        logger.info("→ %s %s  body=%s", method, url, body)
+        # logger.info("→ %s %s  body=%s", method, url, body)
         try:
             async with self._session.request(method, url, **kwargs) as resp:
                 content_type = resp.content_type or ""

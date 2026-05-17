@@ -32,7 +32,7 @@ import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
-DEBUG = False
+DEBUG = True
 
 class Controller:
     """主控制器 —— 编排各独立任务"""
@@ -300,8 +300,15 @@ async def _rank_scramble(self: Controller) -> str:
                 self._last_move = moves
                 logger.info("rank/scramble: 帧=%d 分类=%s 识别=%s", ts, labels, moves)
                 await self.move_queue.put(moves)
+                await asyncio.sleep(0.5)
             else:
+                self._no_scramble_cnt += 1
                 logger.debug("rank/scramble: 分类=%s (无有效转动)", labels)
+                if self._scramble_seen_move and not moves and self._no_scramble_cnt > 1:
+                    logger.info("rank/scramble: 无有效转动且持续多帧，可能打乱结束，进入 solve")
+                    self._scramble_seen_move = False
+                    self._no_scramble_cnt = 0
+                    return "solve"
         await asyncio.sleep(1.0)
         return "scramble"
     else:

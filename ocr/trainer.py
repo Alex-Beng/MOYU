@@ -180,7 +180,7 @@ def _load_dataset_grayscale(data_dir: str) -> tuple[np.ndarray, np.ndarray]:
 # 训练 KNN
 # ------------------------------------------------------------------
 
-def train_knn(data_dir: str, model_output: str):
+def train_knn(data_dir: str, model_output: str, *args, **kwargs):
     """训练 KNN 并保存为 pickle。"""
     features, labels = _load_dataset(data_dir)
     if len(features) == 0:
@@ -221,7 +221,7 @@ def train_knn(data_dir: str, model_output: str):
 # 导出模板（用于模板匹配分类器）
 # ------------------------------------------------------------------
 
-def export_templates(data_dir: str, output_dir: str):
+def export_templates(data_dir: str, output_dir: str, *args, **kwargs):
     """从每类样本中选第一张作为模板图，保存到 output_dir/{label}.png。"""
     data_path = Path(data_dir)
     output = Path(output_dir)
@@ -252,7 +252,7 @@ def export_templates(data_dir: str, output_dir: str):
 # 训练 CNN → ONNX
 # ------------------------------------------------------------------
 
-def train_cnn(data_dir: str, model_output: str):
+def train_cnn(data_dir: str, model_output: str, epochs: int = 20):
     """训练简单 CNN 并导出为 ONNX。
 
     需要安装: pip install torch onnx onnxruntime
@@ -319,7 +319,7 @@ def train_cnn(data_dir: str, model_output: str):
     print(f"{'Epoch':>6}  {'Loss':>8}  {'Acc':>8}")
     print("-" * 24)
 
-    for epoch in range(20):
+    for epoch in range(epochs):
         model.train()
         optimizer.zero_grad()
         output = model(x)
@@ -387,7 +387,7 @@ def train_cnn(data_dir: str, model_output: str):
 # 训练 HOG + SVM
 # ------------------------------------------------------------------
 
-def train_hog_svm(data_dir: str, model_output: str):
+def train_hog_svm(data_dir: str, model_output: str, *args, **kwargs):
     """提取 HOG 特征 + 训练 SVM，保存为 pickle。"""
     data_path = Path(data_dir)
     h, w = CHAR_SIZE[1], CHAR_SIZE[0]
@@ -473,6 +473,7 @@ if __name__ == "__main__":
     # train
     p_train = sub.add_parser("train", help="训练/导出模型")
     p_train.add_argument("--backend", choices=list(_TRAIN_BACKENDS.keys()), default="knn")
+    p_train.add_argument("--epochs", type=int, default=20, help="CNN 训练轮数（仅对 CNN 后端有效）")
     p_train.add_argument("--data", default="data/")
     p_train.add_argument("--output", default=None, help="模型输出路径（默认根据 backend 自动选择）")
 
@@ -489,6 +490,6 @@ if __name__ == "__main__":
             "cnn": "ocr/cnn_model.onnx",
             "hog_svm": "ocr/hog_svm_model.pkl",
         }[args.backend]
-        _TRAIN_BACKENDS[args.backend](args.data, output)
+        _TRAIN_BACKENDS[args.backend](args.data, output, args.epochs)
     else:
         parser.print_help()
