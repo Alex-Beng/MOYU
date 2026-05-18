@@ -15,7 +15,7 @@ MOYU 是基于硬件模拟智能魔方，意图实现人类摸鱼（MOYU），�
 基于 `asyncio.create_task` + `asyncio.gather`，各功能模块以独立 Task 运行：
 
 ```
-main.py → asyncio.run(main())
+controller.py → asyncio.run(main())
             └─ Controller.run()
                 ├─ create_task(_state_machine)    # 状态机驱动
                 ├─ create_task(ScreenLoop.run)     # 截图 + UI 检测
@@ -86,8 +86,7 @@ moyu/
 │   ├── scrcpy_client.py       # python-scrcpy-client 封装（截图/点击/滑动）
 │   ├── cube_api.py            # HTTP → ESP32 转动下发（对接 gan-cube-emu API）
 │   └─ cube_loop.py            # 轮询状态 + 消费转动指令循环
-├── controller.py              # 主控制器（编排任务 + 状态机）
-└── main.py                    # 入口
+└── controller.py              # 入口 + 主控制器（编排任务 + 状态机）
 ```
 
 ## Recipe 配置
@@ -127,7 +126,7 @@ Recipe 是纯配置，只描述 UI 特征（模板图、检测区域、阈值）
 | POST | `/api/move` | 单步转动 `{"face":0-5,"dir":0-1}` |
 | POST | `/api/moves` | 批量转动 `[{"face":0,"dir":0},...]` |
 | GET | `/api/state` | 获取当前魔方状态 JSON |
-| GET | `/api/facelets` | 获取 kociemba 格式面片字符串 |
+| GET | `/api/facelets` | 获取 kociemba 格式面片字符串 `UUUUUUUUURRRRRRRRRFFFFFFFFFDDDDDDDDDLLLLLLLLLBBBBBBBBB` |
 
 Face 映射 (GAN 协议)：`0=U, 1=R, 2=F, 3=D, 4=L, 5=B`
 
