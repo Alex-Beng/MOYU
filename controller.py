@@ -121,6 +121,7 @@ class Controller:
                 if next_state and next_state != self.state:
                     logger.info("状态转移: %s -> %s", self.state, next_state)
                     self.state = next_state
+                    await self._apply_delay()
             else:
                 logger.warning("未知状态: %s (mode=%s)", self.state, self.mode)
                 await asyncio.sleep(1)
@@ -128,6 +129,16 @@ class Controller:
     # ------------------------------------------------------------------
     # 工具方法
     # ------------------------------------------------------------------
+
+    async def _apply_delay(self):
+        """根据当前状态设置 ESP32 转动延迟。"""
+        recipe = self.recipe.recipe
+        if self.state == "scramble" and recipe.scramble_delay is not None:
+            await self.cube.set_delay(recipe.scramble_delay)
+            logger.debug("scramble_delay = %d ms", recipe.scramble_delay)
+        elif self.state == "solve" and recipe.solve_delay is not None:
+            await self.cube.set_delay(recipe.solve_delay)
+            logger.debug("solve_delay = %d ms", recipe.solve_delay)
 
     async def _wait_for_ui(self, feature_name: str, timeout: float = 30.0) -> tuple[bool, any, any]:
         """轮询检测 UI 特征直到出现或超时。"""
@@ -672,15 +683,40 @@ async def _week_re_week(self: Controller) -> str:
 #region remote
 # ======================================================================
 # remote 模式：vrc手动复原
-#   scramble
+#   scramble → solve(等待下一把打乱) → scramble
 # ======================================================================
 
 async def _remote_scramble(self: Controller) -> str:
     """与 rank scramble 逻辑相同：持续检测气泡 → 识别 → 下发 → 等待气泡消失。"""
-    _  = await _rank_scramble(self)
-    return "scramble"
+    return await _rank_scramble(self)
 
-#endremote
+
+async def _remote_solve(self: Controller) -> str:
+    """等待下一把打乱出现：持续检测圆形区域，有有效转动时回到 scramble。"""
+    frame = self.scrcpy.last_frame
+    if frame is None:
+        await asyncio.sleep(0.5)
+        return "solve"
+
+    feat = self.recipe.recipe.feature("scramble_area")
+    if feat and feat.roi:
+        x, y, w, h = feat.roi
+        crop = frame[y:y+h, x:x+w]
+    else:
+        mid = frame.shape[0] // 2
+        crop = frame[mid:, :]
+    chars = segment(crop)
+    if chars and self.classifier:
+        char_imgs = [c[0] for c in chars]
+        labels = self.classifier.predict_batch(char_imgs)
+        moves = parse(labels)
+        if moves:
+            logger.info("remote/solve: 检测到新打乱=%s，回到 scramble", moves)
+            return "scramble"
+
+    await asyncio.sleep(0.5)
+    return "solve"
+#endregion
 
 # ======================================================================
 # 默认 handler（空操作）
@@ -732,6 +768,7 @@ def _get_handlers(mode: str) -> dict[str, any]:
     if mode == "remote":
         return {
             "scramble": _remote_scramble,
+            "solve": _remote_solve,
         }
     return {}
 

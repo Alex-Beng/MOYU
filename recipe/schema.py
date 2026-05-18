@@ -67,15 +67,21 @@ class Recipe:
     """完整 recipe：纯配置，不含流程逻辑。"""
     name: str
     device: DeviceConfig
-    mode: str = "semi"                              # "semi" | "rank" | "holder" | "team"
+    mode: str = "semi"
+    scramble_delay: int | None = None
+    solve_delay: int | None = None
     ui: dict[str, UIFeature] = field(default_factory=dict)
-    base_dir: Path = field(default_factory=Path)    # recipe 文件目录，解析模板图相对路径
+    base_dir: Path = field(default_factory=Path)
 
     @classmethod
     def from_dict(cls, d: dict, base_dir: Path) -> "Recipe":
         device = DeviceConfig.from_dict(d["device"])
         ui = {k: UIFeature.from_dict(v) for k, v in d.get("ui", {}).items()}
-        return cls(name=d["name"], device=device, mode=d.get("mode", "semi"), ui=ui, base_dir=base_dir)
+        return cls(
+            name=d["name"], device=device, mode=d.get("mode", "semi"),
+            scramble_delay=d.get("scramble_delay"), solve_delay=d.get("solve_delay"),
+            ui=ui, base_dir=base_dir,
+        )
 
     def feature(self, name: str) -> UIFeature | None:
         """按名称获取 UI 特征配置。"""

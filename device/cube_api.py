@@ -118,13 +118,13 @@ class CubeAPI:
                 content_type = resp.content_type or ""
 
                 # ESP32 返回纯文本/JSON 的路径
-                if path in ("/api/facelets", "/api/move", "/api/moves", "/api/state"):
+                if path in ("/api/facelets", "/api/move", "/api/moves", "/api/state", "/api/delay"):
                     text = await resp.text()
                     text = text.strip()
                     logger.info("← %s %s  resp=%s", method, url, text)
                     if path == "/api/facelets":
                         return text
-                    if path == "/api/state":
+                    if path in ("/api/state", "/api/delay"):
                         import json
                         return json.loads(text)
                     return {"ok": True, "response": text}
@@ -181,8 +181,18 @@ class CubeAPI:
         return await self.send_moves_raw(steps)
 
     # ------------------------------------------------------------------
-    # 状态查询
+    # 延迟控制
     # ------------------------------------------------------------------
+
+    async def set_delay(self, delay_ms: int) -> bool:
+        """设置 BLE 转动延迟（ms）。"""
+        result = await self._request("POST", "/api/delay", json={"delay": delay_ms})
+        return bool(result.get("delay"))
+
+    async def get_delay(self) -> int | None:
+        """获取当前 BLE 转动延迟（ms）。"""
+        result = await self._request("GET", "/api/delay")
+        return result.get("delay")
 
     async def get_state(self) -> dict:
         """获取当前魔方状态 JSON。"""
