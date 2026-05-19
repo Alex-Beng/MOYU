@@ -5,8 +5,6 @@
         "width": 1080,
         "height": 2400
     },
-    "scramble_delay": 90,
-    "solve_delay": 90,
     "ui": {
         "begin_rank": {
             "template": "../../templates/begin_rank.png",

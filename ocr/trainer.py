@@ -252,7 +252,7 @@ def export_templates(data_dir: str, output_dir: str, *args, **kwargs):
 # 训练 CNN → ONNX
 # ------------------------------------------------------------------
 
-def train_cnn(data_dir: str, model_output: str, epochs: int = 20):
+def train_cnn(data_dir: str, model_output: str, epochs: int = 20, batch_size: int = 64):
     """训练简单 CNN 并导出为 ONNX。
 
     需要安装: pip install torch onnx onnxruntime
@@ -260,6 +260,7 @@ def train_cnn(data_dir: str, model_output: str, epochs: int = 20):
     try:
         import torch
         import torch.nn as nn
+        from torch.utils.data import DataLoader, TensorDataset
     except ImportError:
         logger.error("PyTorch 未安装，CNN 训练不可用。pip install torch")
         return
@@ -269,7 +270,6 @@ def train_cnn(data_dir: str, model_output: str, epochs: int = 20):
         logger.error("未找到任何训练样本")
         return
 
-    # 简单 CNN 定义
     class SimpleCNN(nn.Module):
         def __init__(self, num_classes: int = len(LABELS)):
             super().__init__()
@@ -290,21 +290,18 @@ def train_cnn(data_dir: str, model_output: str, epochs: int = 20):
             return x
 
     h, w = CHAR_SIZE[1], CHAR_SIZE[0]
-    x = torch.tensor(features, dtype=torch.float32)
-    y = torch.tensor(labels, dtype=torch.long)
+    x_tensor = torch.tensor(features, dtype=torch.float32)
+    y_tensor = torch.tensor(labels, dtype=torch.long)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    x = x.to(device)
-    y = y.to(device)
+    logger.info("训练设备: %s", device)
 
     model = SimpleCNN()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    logger.info("训练设备: %s", device)
     weights_path = Path(model_output).with_suffix(".pt")
 
     if weights_path.exists():
-        model.load_state_dict(torch.load(str(weights_path), weights_only=True))
+        model.load_state_dict(torch.load(str(weights_path), weights_only=True, map_location=device))
         logger.info("从已有权重继续训练: %s", weights_path)
     else:
         logger.info("从头开始训练")
@@ -312,22 +309,32 @@ def train_cnn(data_dir: str, model_output: str, epochs: int = 20):
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-    def accuracy(output, target):
-        pred = output.argmax(dim=1)
-        return (pred == target).float().mean().item()
+    dataset = TensorDataset(x_tensor, y_tensor)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=False)
 
     print(f"{'Epoch':>6}  {'Loss':>8}  {'Acc':>8}")
     print("-" * 24)
 
     for epoch in range(epochs):
         model.train()
-        optimizer.zero_grad()
-        output = model(x)
-        loss = criterion(output, y)
-        loss.backward()
-        optimizer.step()
-        acc = accuracy(output, y)
-        print(f"{epoch:6d}  {loss.item():8.4f}  {acc:8.3f}")
+        epoch_loss = 0.0
+        epoch_correct = 0
+        epoch_total = 0
+        for batch_x, batch_y in loader:
+            batch_x = batch_x.to(device)
+            batch_y = batch_y.to(device)
+            optimizer.zero_grad()
+            output = model(batch_x)
+            loss = criterion(output, batch_y)
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item() * batch_x.size(0)
+            pred = output.argmax(dim=1)
+            epoch_correct += (pred == batch_y).sum().item()
+            epoch_total += batch_x.size(0)
+        avg_loss = epoch_loss / epoch_total
+        acc = epoch_correct / epoch_total
+        print(f"{epoch:6d}  {avg_loss:8.4f}  {acc:8.3f}")
 
     # 导出 ONNX
     model.eval().to("cpu")
@@ -344,8 +351,8 @@ def train_cnn(data_dir: str, model_output: str, epochs: int = 20):
     logger.info("CNN 权重已保存: %s", weights_path)
 
     # 显示所有分类错误的图片
-    x_cpu = x.to("cpu")
-    y_cpu = y.to("cpu")
+    x_cpu = x_tensor.to("cpu")
+    y_cpu = y_tensor.to("cpu")
     with torch.no_grad():
         output = model.to("cpu")(x_cpu)
         preds = output.argmax(dim=1).numpy()
@@ -474,6 +481,7 @@ if __name__ == "__main__":
     p_train = sub.add_parser("train", help="训练/导出模型")
     p_train.add_argument("--backend", choices=list(_TRAIN_BACKENDS.keys()), default="knn")
     p_train.add_argument("--epochs", type=int, default=20, help="CNN 训练轮数（仅对 CNN 后端有效）")
+    p_train.add_argument("--batch-size", type=int, default=64, help="CNN mini-batch 大小（仅对 CNN 后端有效）")
     p_train.add_argument("--data", default="data/")
     p_train.add_argument("--output", default=None, help="模型输出路径（默认根据 backend 自动选择）")
 
@@ -490,6 +498,6 @@ if __name__ == "__main__":
             "cnn": "ocr/cnn_model.onnx",
             "hog_svm": "ocr/hog_svm_model.pkl",
         }[args.backend]
-        _TRAIN_BACKENDS[args.backend](args.data, output, args.epochs)
+        _TRAIN_BACKENDS[args.backend](args.data, output, args.epochs, args.batch_size)
     else:
         parser.print_help()
