@@ -1,0 +1,30 @@
+{
+    "name": "xiaomi 13 holder",
+    "mode": "holder",
+    "device": {
+        "width": 1080,
+        "height": 2400
+    },
+    "scramble_delay": 90,
+    "solve_delay": 90,
+    "ui": {
+        "scramble_area": {
+            "template": "",
+            "roi": {"x": 0, "y": 0, "w": 1080, "h": 200},
+            "threshold": 0.0,
+            "desc": "打乱区域"
+        },
+        "begin_holder": {
+            "template": "templates/begin_holder.png",
+            "roi": null,
+            "threshold": 0.85,
+            "desc": "擂台赛开始挑战按钮"
+        },
+        "re_holder": {
+            "template": "templates/re_holder.png",
+            "roi": null,
+            "threshold": 0.80,
+            "desc": "结算返回按钮"
+        }
+    }
+}

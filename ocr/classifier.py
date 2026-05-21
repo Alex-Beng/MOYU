@@ -24,6 +24,7 @@
     # 配置文件驱动
     clf = create_classifier.from_config({"type": "knn", "model_path": "..."})
 """
+from __future__ import annotations
 import logging
 import pickle
 from abc import ABC, abstractmethod

@@ -1,0 +1,36 @@
+{
+    "name": "xiaomi 13 week",
+    "mode": "week",
+    "device": {
+        "width": 1080,
+        "height": 2400
+    },
+    "scramble_delay": 90,
+    "solve_delay": 90,
+    "ui": {
+        "scramble_area": {
+            "template": "",
+            "roi": {"x": 0, "y": 0, "w": 1080, "h": 200},
+            "threshold": 0.0,
+            "desc": "打乱区域"
+        },
+        "begin_team": {
+            "template": "templates/begin_week.png",
+            "roi": null,
+            "threshold": 0.85,
+            "desc": "周赛开始匹配按钮"
+        },
+        "continue_week": {
+            "template": "templates/continue_week.png",
+            "roi": null,
+            "threshold": 0.80,
+            "desc": "点击屏幕继续按钮"
+        },
+        "re_week": {
+            "template": "templates/re_week.png",
+            "roi": null,
+            "threshold": 0.85,
+            "desc": "返回匹配界面按钮"
+        }
+    }
+}

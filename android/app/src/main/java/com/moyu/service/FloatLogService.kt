@@ -4,17 +4,19 @@ import android.app.Service
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.view.Gravity
-import android.view.LayoutInflater
 import android.view.MotionEvent
-import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
-import com.moyu.R
 
 class FloatLogService : Service() {
+    companion object {
+        @Volatile var instance: FloatLogService? = null
+    }
 
     private lateinit var wm: WindowManager
     private lateinit var overlayView: FrameLayout
@@ -24,18 +26,28 @@ class FloatLogService : Service() {
     private var initialY = 0
     private var initialTouchX = 0f
     private var initialTouchY = 0f
+    private val handler = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         showOverlay()
     }
 
     override fun onDestroy() {
+        instance = null
         wm.removeView(overlayView)
         super.onDestroy()
+    }
+
+    fun appendLog(msg: String) {
+        handler.post {
+            val lines = logView.text.split("\n").takeLast(19)
+            logView.text = (lines + msg).joinToString("\n")
+        }
     }
 
     private fun showOverlay() {
@@ -73,9 +85,7 @@ class FloatLogService : Service() {
                 MotionEvent.ACTION_UP -> {
                     val dx = event.rawX - initialTouchX
                     val dy = event.rawY - initialTouchY
-                    if (dx * dx + dy * dy < 100) {
-                        toggleExpand()
-                    }
+                    if (dx * dx + dy * dy < 100) toggleExpand()
                     true
                 }
                 else -> false
