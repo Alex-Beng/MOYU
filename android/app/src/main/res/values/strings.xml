@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">MOYU</string>
+    <string name="accessibility_service_description">允许 MOYU 模拟点击操作手机屏幕</string>
 </resources>
