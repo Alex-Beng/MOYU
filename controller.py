@@ -152,22 +152,22 @@ class Controller:
             return parse_move_notation(move_str)
 
         if result.get("cross"):
-            steps.extend(_parse(result["cross"]))
             if recipe.cross_delay:
                 steps.append({"delay": recipe.cross_delay})
+            steps.extend(_parse(result["cross"]))
 
         if result.get("f2l"):
-            steps.extend(_parse(result["f2l"]))
             if recipe.f2l_delay:
                 steps.append({"delay": recipe.f2l_delay})
+            steps.extend(_parse(result["f2l"]))
 
         if result.get("alll"):
             steps.extend(_parse(result["alll"]))
         else:
             if result.get("oll"):
-                steps.extend(_parse(result["oll"]))
-                if recipe.oll_delay and result.get("pll"):
+                if recipe.oll_delay:
                     steps.append({"delay": recipe.oll_delay})
+                steps.extend(_parse(result["oll"]))
             if result.get("pll"):
                 steps.extend(_parse(result["pll"]))
 
