@@ -70,6 +70,11 @@ class Recipe:
     mode: str = "semi"
     scramble_delay: int | None = None
     solve_delay: int | None = None
+    cross_delay: int | None = None
+    f2l_delay: int | None = None
+    oll_delay: int | None = None
+    rotation: str | None = None
+    move_format: str = "dir"  # "dir" = face/dir, "str" = move string
     ui: dict[str, UIFeature] = field(default_factory=dict)
     base_dir: Path = field(default_factory=Path)
 
@@ -80,6 +85,9 @@ class Recipe:
         return cls(
             name=d["name"], device=device, mode=d.get("mode", "semi"),
             scramble_delay=d.get("scramble_delay"), solve_delay=d.get("solve_delay"),
+            cross_delay=d.get("cross_delay"), f2l_delay=d.get("f2l_delay"),
+            oll_delay=d.get("oll_delay"), rotation=d.get("rotation"),
+            move_format=d.get("move_format", "dir"),
             ui=ui, base_dir=base_dir,
         )
 

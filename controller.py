@@ -22,7 +22,7 @@ from vision.screen_loop import ScreenLoop, ScrcpySource
 from vision.detector import Detector
 from device.cube_loop import CubeLoop
 from device.scrcpy_client import ScrcpyClient
-from device.cube_api import CubeAPI
+from device.cube_api import CubeAPI, parse_move_notation
 from ocr.segmentor import segment
 from ocr.classifier import create_classifier
 from ocr.parser import parse
@@ -33,6 +33,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 DEBUG = True
+
 
 class Controller:
     """主控制器 —— 编排各独立任务"""
@@ -140,6 +141,38 @@ class Controller:
             await self.cube.set_delay(recipe.solve_delay)
             logger.debug("solve_delay = %d ms", recipe.solve_delay)
 
+    def _build_phased_moves(self, result: dict) -> list:
+        """根据 CFOP 求解结果和 recipe 的 per-phase delay 构建带内联 delay 的 moves 列表。"""
+        recipe = self.recipe.recipe
+        steps = []
+
+        def _parse(move_str):
+            if recipe.move_format == "str":
+                return [{"move": t} for t in move_str.split() if t]
+            return parse_move_notation(move_str)
+
+        if result.get("cross"):
+            steps.extend(_parse(result["cross"]))
+            if recipe.cross_delay:
+                steps.append({"delay": recipe.cross_delay})
+
+        if result.get("f2l"):
+            steps.extend(_parse(result["f2l"]))
+            if recipe.f2l_delay:
+                steps.append({"delay": recipe.f2l_delay})
+
+        if result.get("alll"):
+            steps.extend(_parse(result["alll"]))
+        else:
+            if result.get("oll"):
+                steps.extend(_parse(result["oll"]))
+                if recipe.oll_delay and result.get("pll"):
+                    steps.append({"delay": recipe.oll_delay})
+            if result.get("pll"):
+                steps.extend(_parse(result["pll"]))
+
+        return steps
+
     async def _wait_for_ui(self, feature_name: str, timeout: float = 30.0) -> tuple[bool, any, any]:
         """轮询检测 UI 特征直到出现或超时。"""
         elapsed = 0.0
@@ -238,11 +271,10 @@ async def _semi_solve(self: Controller) -> str:
         return "scramble"
 
     try:
-        result = solve_cfop(facelets)
+        result = solve_cfop(facelets, rotation=self.recipe.recipe.rotation)
         solution = result["solution"]
         logger.info("semi/solve: %s (%d步)", solution, len(solution.split()))
-        # solution 是字符串，直接放入 move_queue
-        await self.move_queue.put(solution)
+        await self.move_queue.put(self._build_phased_moves(result))
     except Exception as e:
         logger.error("semi/solve 失败: %s", e, exc_info=True)
     return "scramble"
@@ -345,10 +377,10 @@ async def _rank_solve(self: Controller) -> str:
         return "solve"
 
     try:
-        result = solve_cfop(facelets)
+        result = solve_cfop(facelets, rotation=self.recipe.recipe.rotation)
         solution = result["solution"]
         logger.info("rank/solve: %s (%d步)", solution, len(solution.split()))
-        await self.move_queue.put(solution)
+        await self.move_queue.put(self._build_phased_moves(result))
     except Exception as e:
         logger.error("rank/solve 失败: %s", e, exc_info=True)
 
@@ -458,10 +490,10 @@ async def _holder_solve(self: Controller) -> str:
         return "solve"
 
     try:
-        result = solve_cfop(facelets)
+        result = solve_cfop(facelets, rotation=self.recipe.recipe.rotation)
         solution = result["solution"]
         logger.info("holder/solve: %s (%d步)", solution, len(solution.split()))
-        await self.move_queue.put(solution)
+        await self.move_queue.put(self._build_phased_moves(result))
     except Exception as e:
         logger.error("holder/solve 失败: %s", e)
 
@@ -513,10 +545,10 @@ async def _team_solve(self: Controller) -> str:
         return "solve"
 
     try:
-        result = solve_cfop(facelets)
+        result = solve_cfop(facelets, rotation=self.recipe.recipe.rotation)
         solution = result["solution"]
         logger.info("team/solve: %s (%d步)", solution, len(solution.split()))
-        await self.move_queue.put(solution)
+        await self.move_queue.put(self._build_phased_moves(result))
     except Exception as e:
         logger.error("team/solve 失败: %s", e)
 
@@ -613,10 +645,10 @@ async def _week_solve(self: Controller) -> str:
         return "solve"
 
     try:
-        result = solve_cfop(facelets)
+        result = solve_cfop(facelets, rotation=self.recipe.recipe.rotation)
         solution = result["solution"]
         logger.info("week/solve: %s (%d步)", solution, len(solution.split()))
-        await self.move_queue.put(solution)
+        await self.move_queue.put(self._build_phased_moves(result))
     except Exception as e:
         logger.error("week/solve 失败: %s", e)
 

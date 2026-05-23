@@ -160,23 +160,35 @@ class CubeAPI:
         """批量转动，直接指定 [{"face":0,"dir":0}, ...]。"""
         return await self._request("POST", "/api/moves", json=steps)
 
-    async def send_moves(self, moves: str) -> dict:
-        """下发标准记号转动序列，自动转换为 face/dir。
+    async def send_moves(self, moves: str | list) -> dict:
+        """下发转动序列。固件自动识别 inline delay。
 
-        当 self.single_step=True 时，逐步调用 /api/move 而非批量 /api/moves。
+        当 self.single_step=True 时，逐步调用 /api/move。
 
         Args:
-            moves: 标准记号，如 "R U R' U'"
+            moves: 标准记号如 "R U R' U'"，或 dict 列表
         """
-        steps = parse_move_notation(moves)
+        if isinstance(moves, list):
+            steps = moves
+            desc = f"list ({len(steps)} items)"
+        else:
+            steps = parse_move_notation(moves)
+            desc = moves
         if not steps:
             logger.warning("解析后无有效转动: %s", moves)
             return {}
-        logger.info("下发转动: %s → %d 步%s", moves, len(steps),
+        logger.info("下发: %s → %d items%s", desc, len(steps),
                      " (single_step)" if self.single_step else "")
         if self.single_step:
             for step in steps:
-                await self.send_move_raw(step["face"], step["dir"])
+                if "move" in step:
+                    parsed = parse_move_notation(step["move"])
+                    if parsed:
+                        await self.send_move_raw(parsed[0]["face"], parsed[0]["dir"])
+                elif "face" in step:
+                    await self.send_move_raw(step["face"], step["dir"])
+                elif "delay" not in step:
+                    logger.warning("未知 step 格式: %s", step)
             return {"ok": True}
         return await self.send_moves_raw(steps)
 

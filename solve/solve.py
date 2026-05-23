@@ -69,7 +69,7 @@ def kociemba_to_rubik_cube(k_facelets):
     cross[45:54] = d
     return ''.join(COLOR_MAP[c] for c in cross)
 
-def solve_cfop(facelets, debug=False):
+def solve_cfop(facelets, debug=False, rotation=None):
     try:
         from solve import cfop_solver
         from solve.cfop_solver import CFOPSolver
@@ -77,7 +77,7 @@ def solve_cfop(facelets, debug=False):
         raise RuntimeError("cfop_solver.py not found in solve/")
     cfop_solver.DEBUG = debug
     solver = CFOPSolver()
-    result = solver.solve(facelets)
+    result = solver.solve(facelets, pre_rotation=rotation)
     if result is None:
         raise RuntimeError("No CFOP solution found")
     cross_n = len(result['cross'].split()) if result['cross'] else 0
@@ -92,7 +92,15 @@ def solve_cfop(facelets, debug=False):
     logger.info("  PLL   (%d): %s", pll_n, result['pll'])
     logger.info("  ALLL  (%d): %s", alll_n, result['alll'])
     logger.info("  Total : %d moves", total_n)
-    return {"solution": result['solution']}
+    return {
+        "solution": result['solution'],
+        "cross": result['cross'],
+        "f2l": result['f2l'],
+        "oll": result['oll'],
+        "pll": result['pll'],
+        "alll": result['alll'],
+        "rotation": rotation,
+    }
 
 def solve_kociemba(facelets):
     try:
@@ -152,6 +160,7 @@ def main():
     parser.add_argument('--method', choices=['cfop', 'kociemba', 'min2phase'], default='cfop', help='Solving method (default: cfop)')
     parser.add_argument('--send', action='store_true', help='Send solution to device')
     parser.add_argument('--debug', action='store_true', help='Enable debug output')
+    parser.add_argument('--rotation', choices=['x', "x'", 'z', "z'", 'z2'], default=None, help='Pre-rotation to change bottom face')
     args = parser.parse_args()
     base = f"http://{args.host}"
 
@@ -166,7 +175,7 @@ def main():
 
     print(f"Solving with {args.method.upper()}...")
     if args.method == 'cfop':
-        solution = solve_cfop(facelets, debug=args.debug)
+        solution = solve_cfop(facelets, debug=args.debug, rotation=args.rotation)
     elif args.method == 'kociemba':
         solution = solve_kociemba(facelets)
     else:

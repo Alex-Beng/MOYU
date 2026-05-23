@@ -1545,20 +1545,74 @@ def merge_consecutive_moves(move_indices):
     return result
 
 
+_CW  = [6, 3, 0, 7, 4, 1, 8, 5, 2]
+_CCW = [2, 5, 8, 1, 4, 7, 0, 3, 6]
+_180 = [8, 7, 6, 5, 4, 3, 2, 1, 0]
+_ID  = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+
+# (dst_face, src_face, inner_perm) for URFDLB order (U=0,R=1,F=2,D=3,L=4,B=5)
+_ROTATION_RULES = {
+    'z':  [(0,4,_CW),(1,0,_CW),(2,2,_CW),(3,1,_CW),(4,3,_CW),(5,5,_CCW)],
+    "z'": [(0,1,_CCW),(1,3,_CCW),(2,2,_CCW),(3,4,_CCW),(4,0,_CCW),(5,5,_CW)],
+    'z2': [(0,3,_180),(1,4,_180),(2,2,_180),(3,0,_180),(4,1,_180),(5,5,_180)],
+    'x':  [(0,2,_ID),(1,1,_CW),(2,3,_ID),(3,5,_180),(4,4,_CCW),(5,0,_180)],
+    "x'": [(0,5,_180),(1,1,_CCW),(2,0,_ID),(3,2,_ID),(4,4,_CW),(5,3,_180)],
+}
+
+# COLOR_CHARS = ['U','R','F','D','L','B']
+# After rotation, the face that moved to position U should have its stickers relabeled to 'U', etc.
+# _COLOR_MAP[rot] maps old face index -> new face index
+_FACE_MOVE = {
+    'z':  {4:0, 0:1, 2:2, 1:3, 3:4, 5:5},
+    "z'": {1:0, 3:1, 2:2, 4:3, 0:4, 5:5},
+    'z2': {3:0, 4:1, 2:2, 0:3, 1:4, 5:5},
+    'x':  {2:0, 1:1, 3:2, 5:3, 4:4, 0:5},
+    "x'": {5:0, 1:1, 0:2, 2:3, 4:4, 3:5},
+}
+_FACE_CHARS = ['U', 'R', 'F', 'D', 'L', 'B']
+
+
+def _apply_facelet_rotation(facelet_str, rot_str):
+    faces = [facelet_str[i*9:(i+1)*9] for i in range(6)]
+    result = [''] * 6
+    for dst, src, perm in _ROTATION_RULES[rot_str]:
+        result[dst] = ''.join(faces[src][p] for p in perm)
+    rearranged = ''.join(result)
+    # Remap color characters: old face color -> new face color
+    old_to_new = {}
+    for old_face, new_face in _FACE_MOVE[rot_str].items():
+        old_to_new[_FACE_CHARS[old_face]] = _FACE_CHARS[new_face]
+    return ''.join(old_to_new.get(c, c) for c in rearranged)
+
+
+def _parse_rotation(rot_str):
+    if rot_str.endswith("'"):
+        return rot_str[0], 3
+    elif rot_str.endswith('2'):
+        return rot_str[0], 2
+    else:
+        return rot_str, 1
+
+
 class CFOPSolver:
     def __init__(self):
         init_tables()
 
-    def solve(self, facelet_str):
+    def solve(self, facelet_str, pre_rotation=None):
+        if pre_rotation:
+            facelet_str = _apply_facelet_rotation(facelet_str, pre_rotation)
+
         state = CubieCube.from_facelet(facelet_str)
+
         if state.is_solved():
+            solution = pre_rotation if pre_rotation else ''
             return {
                 'cross': '',
                 'f2l': '',
                 'oll': None,
                 'pll': None,
                 'alll': None,
-                'solution': '',
+                'solution': solution,
             }
 
         cross_moves = solve_cross(state, PERM_PRUN, FLIP_PRUN, PERM_MOVE, FLIP_MOVE)
@@ -1629,9 +1683,30 @@ class CFOPSolver:
         else:
             solution_parts.extend([oll_str, pll_str])
         solution = ' '.join(p for p in solution_parts if p)
+        if pre_rotation:
+            solution = pre_rotation + ' ' + solution if solution else pre_rotation
+
+        if pre_rotation:
+            def _to_basic(s):
+                if not s:
+                    return s
+                basic, _ = convert_alg_to_basic(s)
+                return basic.strip()
+            cross_str  = _to_basic(pre_rotation + ' ' + cross_str  if cross_str  else pre_rotation)
+            f2l_str    = _to_basic(pre_rotation + ' ' + f2l_str    if f2l_str    else '')
+            oll_str    = _to_basic(pre_rotation + ' ' + oll_str    if oll_str    else '') if oll_str    else None
+            pll_str    = _to_basic(pre_rotation + ' ' + pll_str    if pll_str    else '') if pll_str    else None
+            alll_str   = _to_basic(pre_rotation + ' ' + alll_str   if alll_str   else '') if alll_str   else None
+            basic_sol, _ = convert_alg_to_basic(solution)
+            solution = basic_sol.strip()
 
         if DEBUG:
-            verify = apply_alg_str(CubieCube.from_facelet(facelet_str), solution)
+            verify = CubieCube.from_facelet(facelet_str)
+            if pre_rotation:
+                rot_axis, rot_count = _parse_rotation(pre_rotation)
+                for _ in range(rot_count):
+                    verify._apply_rotation(rot_axis)
+            verify = apply_alg_str(verify, ' '.join(solution_parts))
             if verify.is_solved():
                 _dbg("DEBUG: solution verified OK")
             else:
@@ -1659,36 +1734,52 @@ def main():
     import sys
     import time
     if len(sys.argv) < 2:
-        print("Usage: python cfop_solver.py [--scramble] <facelet_or_scramble>")
+        print("Usage: python cfop_solver.py [--scramble] [--rotation z|z'|z2|x|x'] <facelet_or_scramble>")
         print("  Default: treat input as facelet string")
         print("  --scramble: treat input as scramble moves")
+        print("  --rotation: apply pre-rotation to change bottom face (z z' z2 x x')")
         sys.exit(1)
 
     use_scramble = False
-    if sys.argv[1] == '--scramble':
-        use_scramble = True
-        if len(sys.argv) < 3:
-            print("Error: scramble input required")
-            sys.exit(1)
-        scramble_input = sys.argv[2]
-    else:
-        scramble_input = None
+    pre_rotation = None
+    facelet = None
+
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] == '--scramble':
+            use_scramble = True
+            i += 1
+        elif args[i] == '--rotation':
+            if i + 1 >= len(args):
+                print("Error: --rotation requires a value (z, z', z2, x, x')")
+                sys.exit(1)
+            pre_rotation = args[i + 1]
+            i += 2
+        elif facelet is None:
+            facelet = args[i]
+            i += 1
+        else:
+            i += 1
+
+    if facelet is None:
+        print("Error: no input provided")
+        sys.exit(1)
 
     if use_scramble:
         c1 = CubieCube.solved()
-        c2 = apply_alg_str(c1, scramble_input)
+        c2 = apply_alg_str(c1, facelet)
         facelet = c2.to_facelet()
-        print(f"Scramble: {scramble_input}")
+        print(f"Scramble: {facelet}")
         print(f"Facelet: {facelet}")
     else:
-        facelet = sys.argv[1]
         if len(facelet) != 54:
             print("Invalid facelet string length")
             sys.exit(1)
 
     solver = CFOPSolver()
     start_time = time.time()
-    result = solver.solve(facelet)
+    result = solver.solve(facelet, pre_rotation=pre_rotation)
     elapsed_time = time.time() - start_time
 
     if result is None:

@@ -7,6 +7,9 @@
     },
     "scramble_delay": 90,
     "solve_delay": 90,
+    "cross_delay": 80,
+    "f2l_delay": 100,
+    "oll_delay": 80,
     "ui": {
         "begin_holder": {
             "template": "../../templates/begin_holder.png",
