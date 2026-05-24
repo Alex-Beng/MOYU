@@ -11,3 +11,7 @@ __pycache__
 *.pt
 /log
 /ocr/*.png
+/.venv
+/saved_model
+*.png
+*.tflite
