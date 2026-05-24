@@ -32,7 +32,7 @@ import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
-DEBUG = True
+DEBUG = False
 
 
 class Controller:

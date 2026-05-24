@@ -39,7 +39,7 @@ class CubeLoop:
             result = await self.cube_api.send_moves(moves)
             if result.get("ok"):
                 if isinstance(moves, list):
-                    n_moves = sum(1 for s in moves if "face" in s)
+                    n_moves = sum(1 for s in moves if "face" or "move" in s)
                     n_delays = sum(1 for s in moves if "delay" in s)
                     logger.info("转动下发成功: %d moves + %d delays", n_moves, n_delays)
                 else:

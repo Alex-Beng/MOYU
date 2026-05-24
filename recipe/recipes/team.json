@@ -8,9 +8,10 @@
     "scramble_delay": 90,
     "solve_delay": 90,
     "cross_delay": 90,
-    "f2l_delay": 150,
+    "f2l_delay": 130,
     "oll_delay": 90,
     "rotation": "z",
+    "move_format": "str",
     "ui": {
         "begin_team": {
             "template": "../../templates/begin_team.png",

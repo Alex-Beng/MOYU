@@ -8,7 +8,10 @@ from solve.ALLL import EX_ALLLS
 DEBUG = False
 DEBUG = True
 
-ALLL_PROB = 0.5
+ALLL_PROB = 0.1
+
+XCROSS_ENABLED = True
+XCROSS_MAX_CROSS = 4
 
 def _dbg(*args, **kwargs):
     if DEBUG:
@@ -1090,6 +1093,89 @@ def _cross_ida(perm, flip, remaining, last_face, path, perm_prun, flip_prun, per
     return False
 
 
+XCROSS_PAIR_MOVE = {}
+
+
+def build_xcross_pair_move_tables():
+    global XCROSS_PAIR_MOVE
+    if XCROSS_PAIR_MOVE:
+        return XCROSS_PAIR_MOVE
+    for pair_idx in range(4):
+        xmove = [[0] * 576 for _ in range(18)]
+        for mi in range(18):
+            face = mi // 3
+            turns = (mi % 3) + 1
+            for pc in range(576):
+                s = _pair_to_cube(pc, pair_idx)
+                for _ in range(turns):
+                    s.apply_cw(face)
+                xmove[mi][pc] = get_pair_coord(s, pair_idx)
+        XCROSS_PAIR_MOVE[pair_idx] = xmove
+    return XCROSS_PAIR_MOVE
+
+
+def solve_xcross_pair(state, pair_idx, perm_prun, flip_prun, perm_move, flip_move, pair_prun, max_depth=12):
+    build_xcross_pair_move_tables()
+    perm0 = get_cross_perm_coord(state)
+    flip0 = get_cross_flip_coord(state)
+    if perm_prun[perm0] == 0 and flip_prun[flip0] == 0 and pair_is_solved(state, pair_idx):
+        return []
+    for depth in range(1, max_depth + 1):
+        _dbg(f"DEBUG: xcross pair {pair_idx} searching depth={depth}")
+        path = []
+        pair0 = get_pair_coord(state, pair_idx)
+        if _xcross_ida(state, pair_idx, perm0, flip0, pair0, depth, -1, path,
+                       perm_prun, flip_prun, perm_move, flip_move, pair_prun):
+            _dbg(f"DEBUG: xcross pair {pair_idx} found at depth={depth}")
+            return path
+    return None
+
+
+def _xcross_ida(state, pair_idx, perm, flip, pair, remaining, last_face, path,
+                perm_prun, flip_prun, perm_move, flip_move, pair_prun):
+    h_cross = max(perm_prun[perm], flip_prun[flip])
+    h_pair = pair_prun[pair_idx][pair]
+    h = max(h_cross, h_pair)
+    if h > remaining:
+        return False
+    if remaining == 0:
+        if not pair_is_solved(state, pair_idx):
+            return False
+        return perm_prun[perm] == 0 and flip_prun[flip] == 0
+    next_moves = get_next_moves(range(18), last_face)
+    xpair_move = XCROSS_PAIR_MOVE[pair_idx]
+    for m in next_moves:
+        np = perm_move[m][perm]
+        nf = flip_move[m][flip]
+        npair = xpair_move[m][pair]
+        path.append(m)
+        ns = state.apply_move_idx_copy(m)
+        if _xcross_ida(ns, pair_idx, np, nf, npair, remaining - 1, m // 3, path,
+                       perm_prun, flip_prun, perm_move, flip_move, pair_prun):
+            return True
+        path.pop()
+    return False
+
+
+def solve_xcross(state, perm_prun, flip_prun, perm_move, flip_move, pair_prun, max_depth=12):
+    state0 = state.copy()
+    heuristics = []
+    for pair_idx in range(4):
+        if not pair_is_solved(state, pair_idx):
+            h = pair_prun[pair_idx][get_pair_coord(state, pair_idx)]
+            heuristics.append((h, pair_idx))
+    if not heuristics:
+        return None, None
+    heuristics.sort()
+    best_moves, best_pair = None, None
+    for h, pair_idx in heuristics:
+        state = state0.copy()
+        result = solve_xcross_pair(state, pair_idx, perm_prun, flip_prun, perm_move, flip_move, pair_prun, max_depth)
+        if result is not None and (best_moves is None or len(result) < len(best_moves)):
+            best_moves, best_pair = result, pair_idx
+    return best_moves, best_pair
+
+
 def _check_cross_intact(state):
     for e in [4, 5, 6, 7]:
         if state.ep[e] != e or state.eo[e] != 0:
@@ -1142,17 +1228,19 @@ def _f2l_ida(state: 'CubieCube', pair_idx, remaining, last_face, path, pair_prun
     return False
 
 
-def solve_f2l(state: 'CubieCube', pair_prun, pair_move):
+def solve_f2l(state: 'CubieCube', pair_prun, pair_move, solved_pair=None):
     if F2L_MACRO_MODE:
-        return _solve_f2l_macro(state)
-    return _solve_f2l_single(state, pair_prun, pair_move)
+        return _solve_f2l_macro(state, solved_pair)
+    return _solve_f2l_single(state, pair_prun, pair_move, solved_pair)
 
 
-def _solve_f2l_single(state: 'CubieCube', pair_prun, pair_move):
+def _solve_f2l_single(state: 'CubieCube', pair_prun, pair_move, solved_pair=None):
     """Original F2L solver using single-move IDA* with macro fallback on timeout."""
     import time
     full_moves = []
     solved_pairs = set()
+    if solved_pair is not None:
+        solved_pairs.add(solved_pair)
     for i in range(4):
         if pair_is_solved(state, i):
             solved_pairs.add(i)
@@ -1230,15 +1318,17 @@ def _solve_f2l_single(state: 'CubieCube', pair_prun, pair_move):
     return full_moves, state
 
 
-def _solve_f2l_macro(state):
+def _solve_f2l_macro(state, solved_pair=None):
     """F2L solver using macro operations (triggers + U/D-layer turns)."""
     macro_prun = MACRO_PAIR_PRUN
     if macro_prun is None:
         _dbg("DEBUG: macro pruning tables not available, falling back to single-move mode")
-        return _solve_f2l_single(state, PAIR_PRUN, PAIR_MOVE)
-    
+        return _solve_f2l_single(state, PAIR_PRUN, PAIR_MOVE, solved_pair)
+
     full_moves = []
     solved_pairs = set()
+    if solved_pair is not None:
+        solved_pairs.add(solved_pair)
     for i in range(4):
         if pair_is_solved(state, i):
             solved_pairs.add(i)
@@ -1621,10 +1711,24 @@ class CFOPSolver:
             return None
         cross_str = moves_to_str(cross_moves)
         _dbg(f"DEBUG: cross = {cross_str}")
+
+        solved_pair = None
+        if XCROSS_ENABLED and len(cross_moves) <= XCROSS_MAX_CROSS:
+            _dbg(f"DEBUG: xcross attempt (cross={len(cross_moves)}m <= {XCROSS_MAX_CROSS})")
+            xcross_moves, xcross_pair = solve_xcross(
+                state.copy(), PERM_PRUN, FLIP_PRUN, PERM_MOVE, FLIP_MOVE, PAIR_PRUN,
+                max_depth=min(len(cross_moves) + 8, 14)
+            )
+            if xcross_moves is not None:
+                _dbg(f"DEBUG: xcross found pair {xcross_pair} with {len(xcross_moves)}m")
+                cross_moves = xcross_moves
+                cross_str = moves_to_str(cross_moves)
+                solved_pair = xcross_pair
+
         for m in cross_moves:
             state.apply_move_idx(m)
 
-        f2l_result = solve_f2l(state, PAIR_PRUN, PAIR_MOVE)
+        f2l_result = solve_f2l(state, PAIR_PRUN, PAIR_MOVE, solved_pair=solved_pair)
         if f2l_result is None:
             _dbg("DEBUG: f2l failed")
             return None
