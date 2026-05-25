@@ -30,7 +30,8 @@
         </activity>
 
         <service
-            android:name=".service.FloatLogService" />
+            android:name=".service.FloatLogService"
+            android:foregroundServiceType="specialUse" />
 
         <service
             android:name=".service.ScreenCaptureService"

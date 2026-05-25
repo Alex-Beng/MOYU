@@ -1,6 +1,9 @@
 package com.moyu.solve
 
+import android.util.Log
+
 object LLSolver {
+    private const val TAG = "LLSolver"
     val OLL_ALGS = mapOf(
         1 to "R U2 R2 F R F' U2 R' F R F'",
         2 to "y' R U' R2 D' r U r' D R2 U R'",
@@ -137,6 +140,10 @@ object LLSolver {
             val key = FourFourKey(coKey, eoKey)
             if (key in ollRec) {
                 val (name, alg) = ollRec[key]!!
+                if (CfopSolver.DEBUG) {
+                    Log.d(TAG, "OLL case=$name auf=$auf alg=$alg")
+                    CfopSolver.logFn?.invoke("oll case=$name alg=$alg")
+                }
                 val aufStr = mapOf(0 to "", 1 to "U", 2 to "U2", 3 to "U'" )[auf]!!
                 if (name == "skip") return Pair("", state)
                 val full = listOfNotNull(aufStr, alg).filter { it.isNotEmpty() }.joinToString(" ")
@@ -155,6 +162,10 @@ object LLSolver {
             val key = FourFourKey(cpKey, epKey)
             if (key in pllRec) {
                 val (name, alg) = pllRec[key]!!
+                if (CfopSolver.DEBUG) {
+                    Log.d(TAG, "PLL case=$name auf=$auf alg=$alg")
+                    CfopSolver.logFn?.invoke("pll case=$name alg=$alg")
+                }
                 val aufStr = mapOf(0 to "", 1 to "U", 2 to "U2", 3 to "U'" )[auf]!!
                 if (name == "skip") return Pair("", state)
                 val full = listOfNotNull(aufStr, alg).filter { it.isNotEmpty() }.joinToString(" ")

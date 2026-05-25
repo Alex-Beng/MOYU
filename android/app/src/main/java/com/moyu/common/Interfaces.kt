@@ -10,7 +10,11 @@ data class DetectionResult(val matched: Boolean, val centerX: Int, val centerY: 
 
 data class CharBubble(val bitmap: Bitmap, val cx: Int, val cy: Int, val r: Int)
 
-data class CubeMove(val face: Int, val dir: Int)
+data class CubeMove(val face: Int, val dir: Int) : CubeCommand
+data class CubeMoveStr(val move: String) : CubeCommand
+data class CubeDelay(val ms: Int) : CubeCommand
+
+sealed interface CubeCommand
 
 interface FrameSource {
     fun lastFrame(): Frame?
@@ -24,7 +28,7 @@ interface TouchInjector {
 interface CubeClient {
     suspend fun getFacelets(): String
     suspend fun sendMoves(notation: String): Boolean
-    suspend fun sendMovesRaw(moves: List<CubeMove>): Boolean
+    suspend fun sendMovesRaw(moves: List<CubeCommand>): Boolean
     suspend fun setDelay(ms: Int): Boolean
     suspend fun getState(): Map<String, Any>
 }

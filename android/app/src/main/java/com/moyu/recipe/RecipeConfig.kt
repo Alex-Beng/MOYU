@@ -20,6 +20,11 @@ data class RecipeConfig(
     val deviceHeight: Int,
     val scrambleDelay: Int?,
     val solveDelay: Int?,
+    val crossDelay: Int?,
+    val f2lDelay: Int?,
+    val ollDelay: Int?,
+    val rotation: String?,
+    val moveFormat: String,
     val ui: Map<String, UiFeature>
 ) {
     fun feature(name: String): UiFeature? = ui[name]
@@ -42,7 +47,7 @@ object RecipeLoader {
         return Roi(x, y, w, h)
     }
 
-    fun load(context: Context, assetPath: String = "recipes/rank.json"): RecipeConfig {
+    fun load(context: Context, assetPath: String = "rank.json"): RecipeConfig {
         val recipeDir = context.filesDir.resolve("recipes")
         val targetFile = recipeDir.resolve(assetPath)
         if (!targetFile.exists()) {
@@ -77,6 +82,11 @@ object RecipeLoader {
             deviceHeight = device.getInt("height"),
             scrambleDelay = root.optInt("scramble_delay", 0).takeIf { it > 0 },
             solveDelay = root.optInt("solve_delay", 0).takeIf { it > 0 },
+            crossDelay = root.optInt("cross_delay", 0).takeIf { it > 0 },
+            f2lDelay = root.optInt("f2l_delay", 0).takeIf { it > 0 },
+            ollDelay = root.optInt("oll_delay", 0).takeIf { it > 0 },
+            rotation = root.optString("rotation", null).takeIf { !it.isNullOrBlank() },
+            moveFormat = root.optString("move_format", "dir"),
             ui = ui
         )
     }

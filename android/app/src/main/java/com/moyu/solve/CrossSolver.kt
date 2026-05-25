@@ -1,5 +1,7 @@
 package com.moyu.solve
 
+import android.util.Log
+
 object CrossSolver {
     fun solve(
         state: CubieCube,
@@ -14,6 +16,10 @@ object CrossSolver {
         if (permPrun[perm0].toInt() == 0 && flipPrun[flip0].toInt() == 0) return emptyList()
 
         for (depth in 1..maxDepth) {
+            if (CfopSolver.DEBUG) {
+                Log.d("Cross", "searching depth=$depth")
+                CfopSolver.logFn?.invoke("cross depth=$depth")
+            }
             val path = mutableListOf<Int>()
             if (crossIda(perm0, flip0, depth, -1, path, permPrun, flipPrun, permMove, flipMove)) {
                 return path

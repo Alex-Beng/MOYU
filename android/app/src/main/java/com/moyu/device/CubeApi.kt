@@ -1,7 +1,10 @@
 package com.moyu.device
 
 import com.moyu.common.CubeClient
+import com.moyu.common.CubeCommand
+import com.moyu.common.CubeDelay
 import com.moyu.common.CubeMove
+import com.moyu.common.CubeMoveStr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -37,6 +40,7 @@ class CubeApi(
                 override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
                     if (cont.isActive) cont.resumeWithException(e)
                 }
+
                 override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
                     response.use { resp ->
                         val body = resp.body?.string() ?: ""
@@ -56,6 +60,7 @@ class CubeApi(
                 override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
                     if (cont.isActive) cont.resumeWithException(e)
                 }
+
                 override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
                     response.use { resp ->
                         val body = resp.body?.string() ?: ""
@@ -76,12 +81,19 @@ class CubeApi(
         return sendMovesRaw(moves)
     }
 
-    override suspend fun sendMovesRaw(moves: List<CubeMove>): Boolean {
+    override suspend fun sendMovesRaw(moves: List<CubeCommand>): Boolean {
         val arr = JSONArray()
         for (m in moves) {
             val obj = org.json.JSONObject()
-            obj.put("face", m.face)
-            obj.put("dir", m.dir)
+            when (m) {
+                is CubeMove -> {
+                    obj.put("face", m.face)
+                    obj.put("dir", m.dir)
+                }
+
+                is CubeMoveStr -> obj.put("move", m.move)
+                is CubeDelay -> obj.put("delay", m.ms)
+            }
             arr.put(obj)
         }
         val resp = post("/api/moves", arr.toString())
@@ -155,8 +167,10 @@ class MockCubeApi : CubeClient {
         return true
     }
 
-    override suspend fun sendMovesRaw(moves: List<CubeMove>): Boolean {
-        sentMoves.addAll(moves)
+    override suspend fun sendMovesRaw(moves: List<CubeCommand>): Boolean {
+        for (m in moves) {
+            if (m is CubeMove) sentMoves.add(m)
+        }
         return true
     }
 

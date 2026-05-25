@@ -1,5 +1,6 @@
 package com.moyu.service
 
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -13,114 +14,120 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import com.moyu.common.Frame
-import com.moyu.common.FrameSource
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import java.util.concurrent.atomic.AtomicReference
 
-class ScreenCaptureService : Service(), FrameSource {
+class ScreenCaptureService : Service() {
+
     companion object {
+        var instance: ScreenCaptureService? = null
+            private set
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
-        private const val NOTIFICATION_ID = 1001
-
-        @Volatile var instance: ScreenCaptureService? = null
+        private const val NOTIFICATION_ID = 1002
     }
 
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
-
-    private val _lastFrame = MutableStateFlow<Frame?>(null)
-    val lastFrameFlow: StateFlow<Frame?> = _lastFrame
-
-    override fun lastFrame(): Frame? = _lastFrame.value
+    private var captureThread: HandlerThread? = null
+    private var captureHandler: Handler? = null
+    private var recentFrame: Frame? = null
+    private var recipeExtra: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         instance = this
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, -1) ?: -1
-        val resultData = intent?.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
-
-        if (resultCode == -1 || resultData == null) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
-        startForeground(NOTIFICATION_ID, buildNotification())
-        setupProjection(resultCode, resultData)
-        return START_STICKY
+        startForeground(NOTIFICATION_ID, createNotification())
     }
 
     override fun onDestroy() {
         instance = null
         virtualDisplay?.release()
-        mediaProjection?.stop()
         imageReader?.close()
+        captureThread?.quitSafely()
+        mediaProjection?.stop()
         super.onDestroy()
     }
 
-    private fun setupProjection(resultCode: Int, data: Intent) {
-        val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = mgr.getMediaProjection(resultCode, data)
-
-        val displayMetrics = resources.displayMetrics
-        val width = displayMetrics.widthPixels
-        val height = displayMetrics.heightPixels
-        val density = displayMetrics.densityDpi
-
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-        imageReader?.setOnImageAvailableListener({ reader ->
-            val image = reader.acquireLatestImage()
-            if (image != null) {
-                val planes = image.planes
-                val buffer = planes[0].buffer
-                val pixelStride = planes[0].pixelStride
-                val rowStride = planes[0].rowStride
-                val rowPadding = rowStride - pixelStride * width
-
-                val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
-                bitmap.copyPixelsFromBuffer(buffer)
-
-                if (rowPadding == 0) {
-                    _lastFrame.value = Frame(bitmap, System.currentTimeMillis())
-                } else {
-                    val cropped = Bitmap.createBitmap(bitmap, 0, 0, width, height)
-                    bitmap.recycle()
-                    _lastFrame.value = Frame(cropped, System.currentTimeMillis())
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        FloatLogService.instance?.appendLog("ScreenCapture onStartCommand intent=${intent != null}")
+        recipeExtra = intent?.getStringExtra("recipe")
+        if (intent != null && mediaProjection == null) {
+            val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
+            val data = intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+            FloatLogService.instance?.appendLog("ScreenCapture resultCode=$resultCode data=${data != null}")
+            if (resultCode == -1 && data != null) {
+                val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                mediaProjection = mpm.getMediaProjection(resultCode, data)
+                try {
+                    val wm = getSystemService(WINDOW_SERVICE) as android.view.WindowManager
+                    val w = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        val bounds = wm.currentWindowMetrics.bounds; bounds.width()
+                    } else {
+                        wm.defaultDisplay.width
+                    }
+                    val h = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        val bounds = wm.currentWindowMetrics.bounds; bounds.height()
+                    } else {
+                        wm.defaultDisplay.height
+                    }
+                    imageReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+                    virtualDisplay = mediaProjection!!.createVirtualDisplay("moyu", w, h, resources.displayMetrics.densityDpi,
+                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, imageReader!!.surface, null, null)
+                    captureThread = HandlerThread("capture").also { it.start() }
+                    captureHandler = Handler(captureThread!!.looper)
+                    imageReader!!.setOnImageAvailableListener({ reader ->
+                        val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                        val planes = image.planes
+                        val buffer = planes[0].buffer
+                        val pixelStride = planes[0].pixelStride
+                        val rowStride = planes[0].rowStride
+                        val rowPadding = rowStride - pixelStride * w
+                        val bmp = Bitmap.createBitmap(w + rowPadding / pixelStride, h, Bitmap.Config.ARGB_8888)
+                        bmp.copyPixelsFromBuffer(buffer)
+                        image.close()
+                        recentFrame = Frame(bmp, System.currentTimeMillis())
+                    }, captureHandler)
+                    FloatLogService.instance?.appendLog("截屏服务已启动")
+                } catch (e: Exception) {
+                    FloatLogService.instance?.appendLog("截屏启动失败: ${e.message}")
                 }
-                image.close()
+                startController()
             }
-        }, null)
-
-        virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "MOYU Screen Capture",
-            width, height, density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader?.surface, null, null
-        )
+        }
+        return START_STICKY
     }
 
-    private fun buildNotification(): Notification {
-        val channelId = "moyu_screen_capture"
+    fun lastFrame(): Frame? = recentFrame
+
+    private fun startController() {
+        FloatLogService.instance?.appendLog("正在启动控制器...")
+        val intent = Intent(this, ControllerService::class.java)
+        recipeExtra?.let { intent.putExtra("recipe", it) }
+        startService(intent)
+    }
+
+    private fun createNotification(): Notification {
+        val channelId = "moyu_capture"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                channelId, "截屏服务",
+                channelId, "MOYU 截屏",
                 NotificationManager.IMPORTANCE_LOW
             )
-            val nm = getSystemService(NotificationManager::class.java)
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
             nm.createNotificationChannel(channel)
         }
         return Notification.Builder(this, channelId)
             .setContentTitle("MOYU")
-            .setContentText("屏幕截取运行中")
+            .setContentText("屏幕捕获中")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setOngoing(true)
             .build()
     }
 }

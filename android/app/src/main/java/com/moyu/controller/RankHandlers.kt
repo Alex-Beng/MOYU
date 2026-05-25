@@ -33,6 +33,7 @@ suspend fun rankScramble(ctrl: Controller): String? {
                 ctrl.log("打乱: $moves")
                 delay(500)
             } else {
+                ctrl.log("OCR: ${labels.size} bubbles → raw=$labels → no valid moves")
                 ctrl.noScrambleCnt++
                 if (ctrl.scrambleSeenMove && ctrl.noScrambleCnt > 1) {
                     delay(1000)
@@ -40,6 +41,7 @@ suspend fun rankScramble(ctrl: Controller): String? {
                 }
             }
         } else {
+            ctrl.log("OCR: 0 bubbles detected")
             ctrl.noScrambleCnt++
             if (ctrl.scrambleSeenMove && ctrl.noScrambleCnt > 1) {
                 delay(1000)
@@ -62,14 +64,14 @@ suspend fun rankSolve(ctrl: Controller): String? {
             return "solve"
         }
         ctrl.log("面片: $facelets")
-        val result = ctrl.solver.solve(facelets)
+        val result = ctrl.solver.solve(facelets, ctrl.recipe.rotation)
         if (result == null) {
             ctrl.log("求解失败，重试...")
             delay(2000)
             return "solve"
         }
         ctrl.log("解法: ${result.solution} (${result.solution.split(" ").size}步)")
-        ctrl.queueMoves(result.solution)
+        ctrl.queueCommands(ctrl.buildPhasedMoves(result))
 
         val start = System.currentTimeMillis()
         val timeout = 180_000L
@@ -126,8 +128,8 @@ suspend fun semiSolve(ctrl: Controller): String? {
     ctrl.log("semi/solve")
     val facelets = ctrl.getFacelets()
     if (facelets.length != 54) return "solve"
-    val result = ctrl.solver.solve(facelets) ?: return "solve"
-    ctrl.queueMoves(result.solution)
+    val result = ctrl.solver.solve(facelets, ctrl.recipe.rotation) ?: return "solve"
+    ctrl.queueCommands(ctrl.buildPhasedMoves(result))
     delay(5000)
     return "scramble"
 }
@@ -144,8 +146,8 @@ suspend fun holderInit(ctrl: Controller): String? {
 suspend fun holderSolve(ctrl: Controller): String? {
     ctrl.log("holder/solve")
     val facelets = ctrl.getFacelets()
-    val result = ctrl.solver.solve(facelets) ?: return "solve"
-    ctrl.queueMoves(result.solution)
+    val result = ctrl.solver.solve(facelets, ctrl.recipe.rotation) ?: return "solve"
+    ctrl.queueCommands(ctrl.buildPhasedMoves(result))
     ctrl.waitForUi("re_holder", 120_000L)?.let {
         ctrl.clickFeature("re_holder")
         delay(2000)
@@ -173,8 +175,8 @@ suspend fun teamInit(ctrl: Controller): String? {
 suspend fun teamSolve(ctrl: Controller): String? {
     ctrl.log("team/solve")
     val facelets = ctrl.getFacelets()
-    val result = ctrl.solver.solve(facelets) ?: return "solve"
-    ctrl.queueMoves(result.solution)
+    val result = ctrl.solver.solve(facelets, ctrl.recipe.rotation) ?: return "solve"
+    ctrl.queueCommands(ctrl.buildPhasedMoves(result))
     ctrl.waitForUi("continue_team", 120_000L)?.let {
         ctrl.clickFeature("continue_team")
         delay(2000)
@@ -202,8 +204,8 @@ suspend fun weekInit(ctrl: Controller): String? {
 suspend fun weekSolve(ctrl: Controller): String? {
     ctrl.log("week/solve")
     val facelets = ctrl.getFacelets()
-    val result = ctrl.solver.solve(facelets) ?: return "solve"
-    ctrl.queueMoves(result.solution)
+    val result = ctrl.solver.solve(facelets, ctrl.recipe.rotation) ?: return "solve"
+    ctrl.queueCommands(ctrl.buildPhasedMoves(result))
     ctrl.waitForUi("continue_week", 120_000L)?.let {
         ctrl.clickFeature("continue_week")
         delay(2000)
@@ -222,8 +224,8 @@ suspend fun weekReWeek(ctrl: Controller): String? {
 suspend fun remoteSolve(ctrl: Controller): String? {
     ctrl.log("remote/solve")
     val facelets = ctrl.getFacelets()
-    val result = ctrl.solver.solve(facelets) ?: return "solve"
-    ctrl.queueMoves(result.solution)
+    val result = ctrl.solver.solve(facelets, ctrl.recipe.rotation) ?: return "solve"
+    ctrl.queueCommands(ctrl.buildPhasedMoves(result))
     delay(5000)
     return "scramble"
 }

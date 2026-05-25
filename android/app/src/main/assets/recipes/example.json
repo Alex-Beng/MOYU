@@ -7,6 +7,9 @@
     },
     "scramble_delay": 90,
     "solve_delay": 90,
+    "cross_delay": 0,
+    "f2l_delay": 0,
+    "oll_delay": 0,
     "ui": {
         "scramble_area": {
             "template": "",

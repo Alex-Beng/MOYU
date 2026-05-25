@@ -47,9 +47,10 @@ class MoveClassifier(context: Context) : AutoCloseable {
     }
 
     private fun preprocessBitmap(bmp: Bitmap): ByteBuffer {
+        val resized = Bitmap.createScaledBitmap(bmp, inputSize, inputSize, true)
         val gray = FloatArray(inputSize * inputSize)
         val pixels = IntArray(inputSize * inputSize)
-        bmp.getPixels(pixels, 0, inputSize, 0, 0, inputSize, inputSize)
+        resized.getPixels(pixels, 0, inputSize, 0, 0, inputSize, inputSize)
         for (i in pixels.indices) {
             val p = pixels[i]
             val r = (p shr 16) and 0xFF
@@ -71,5 +72,5 @@ class MoveClassifier(context: Context) : AutoCloseable {
         return fileChannel.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, afd.startOffset, afd.declaredLength)
     }
 
-    override fun close() = interpreter?.close()
+    override fun close() { interpreter ?.close() }
 }

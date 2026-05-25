@@ -1,71 +1,191 @@
 package com.moyu.service
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
-import android.widget.FrameLayout
+import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import com.moyu.controller.Controller
+import java.text.SimpleDateFormat
+import java.util.Date
 
 class FloatLogService : Service() {
+
     companion object {
-        @Volatile var instance: FloatLogService? = null
+        var instance: FloatLogService? = null
+            private set
+        private const val NOTIFICATION_ID = 1000
     }
 
     private lateinit var wm: WindowManager
-    private lateinit var overlayView: FrameLayout
+    private lateinit var overlayView: LinearLayout
+    private lateinit var scrollView: ScrollView
     private lateinit var logView: TextView
+    private lateinit var btnPause: TextView
+    private lateinit var btnStop: TextView
+    private lateinit var btnRestart: TextView
+    private lateinit var lblRestartState: TextView
     private var isExpanded = false
     private var initialX = 0
     private var initialY = 0
     private var initialTouchX = 0f
     private var initialTouchY = 0f
-    private val handler = Handler(Looper.getMainLooper())
+    var controller: Controller? = null
+    private var restartStateIdx = 0
+    private val restartStates = listOf("init", "scramble", "solve")
+    private val restartHandler = Handler(Looper.getMainLooper())
+    private var restartConfirmRunnable: Runnable? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         instance = this
+        startForeground(NOTIFICATION_ID, createNotification())
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         showOverlay()
     }
 
     override fun onDestroy() {
         instance = null
-        wm.removeView(overlayView)
+        if (::overlayView.isInitialized) wm.removeView(overlayView)
         super.onDestroy()
     }
 
+    fun bindController(c: Controller) {
+        controller = c
+    }
+
+    private fun createNotification(): Notification {
+        val channelId = "moyu_float"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(channelId, "MOYU", NotificationManager.IMPORTANCE_LOW)
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            nm.createNotificationChannel(channel)
+        }
+        return Notification.Builder(this, channelId)
+            .setContentTitle("MOYU").setContentText("运行中")
+            .setSmallIcon(android.R.drawable.ic_menu_info_details).setOngoing(true).build()
+    }
+
     fun appendLog(msg: String) {
-        handler.post {
-            val lines = logView.text.split("\n").takeLast(19)
-            logView.text = (lines + msg).joinToString("\n")
+        android.util.Log.d("FloatLog", msg)
+        logView.post {
+            val ts = SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+            val line = "$ts $msg"
+            val ss = SpannableString("\n$line")
+            ss.setSpan(ForegroundColorSpan(Color.GREEN), 0, ss.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            logView.append(ss)
+            scrollView.post { scrollView.fullScroll(ScrollView.FOCUS_DOWN) }
+        }
+    }
+
+    private fun makeBtn(label: String, bgColor: Int): TextView {
+        return TextView(this).apply {
+            text = label
+            setTextColor(Color.WHITE)
+            setBackgroundColor(bgColor)
+            textSize = 11f
+            setPadding(12, 4, 12, 4)
+            gravity = Gravity.CENTER
         }
     }
 
     private fun showOverlay() {
-        overlayView = FrameLayout(this)
-        overlayView.setBackgroundColor(0xCC000000.toInt())
+        overlayView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xCC000000.toInt())
+        }
 
+        // ── Control bar ──
+        val controlBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(4, 4, 4, 4)
+        }
+
+        btnPause = makeBtn("暂停", 0xFF444444.toInt()).apply {
+            setOnClickListener {
+                val c = controller
+                if (c != null) {
+                    if (c.isPaused()) {
+                        c.resume()
+                        post { btnPause.text = "暂停" }
+                    } else {
+                        c.pause()
+                        post { btnPause.text = "继续" }
+                    }
+                }
+            }
+        }
+        controlBar.addView(btnPause, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = 6 })
+
+        btnStop = makeBtn("停止", 0xFFAA3333.toInt()).apply {
+            setOnClickListener {
+                controller?.stop()
+                appendLog("控制器已停止")
+            }
+        }
+        controlBar.addView(btnStop, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = 6 })
+
+        lblRestartState = TextView(this).apply {
+            text = "init"
+            setTextColor(Color.YELLOW)
+            textSize = 10f
+            setPadding(4, 0, 4, 0)
+        }
+        controlBar.addView(lblRestartState)
+
+        btnRestart = makeBtn("重启", 0xFF3366AA.toInt()).apply {
+            setOnClickListener {
+                restartStateIdx = (restartStateIdx + 1) % restartStates.size
+                val s = restartStates[restartStateIdx]
+                post { lblRestartState.text = s }
+                restartConfirmRunnable?.let { restartHandler.removeCallbacks(it) }
+                restartConfirmRunnable = Runnable {
+                    val c = controller
+                    if (c != null) {
+                        post { appendLog("重启 → $s") }
+                        c.restartAt(s)
+                    }
+                }
+                restartHandler.postDelayed(restartConfirmRunnable!!, 1500)
+            }
+        }
+        controlBar.addView(btnRestart, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = 6 })
+
+        overlayView.addView(controlBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        // ── Log area ──
         logView = TextView(this).apply {
             text = "MOYU 启动完成"
-            setTextColor(0xFF00FF00.toInt())
+            setTextColor(Color.GREEN)
             textSize = 12f
             setPadding(8, 8, 8, 8)
         }
-        overlayView.addView(logView, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT
-        ))
+        scrollView = ScrollView(this).apply {
+            addView(logView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        overlayView.addView(scrollView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        overlayView.setOnTouchListener { _, event ->
+        // Drag-to-move on control bar only (not on log area)
+        controlBar.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     val params = overlayView.layoutParams as WindowManager.LayoutParams
@@ -100,17 +220,13 @@ class FloatLogService : Service() {
         }
 
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            flags,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            360, 200, flags,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 0
-            y = 200
+            x = 0; y = 200
         }
-
         wm.addView(overlayView, params)
     }
 
@@ -118,13 +234,9 @@ class FloatLogService : Service() {
         isExpanded = !isExpanded
         val params = overlayView.layoutParams as WindowManager.LayoutParams
         if (isExpanded) {
-            params.width = 600
-            params.height = 800
-            logView.textSize = 12f
+            params.width = 600; params.height = 600
         } else {
-            params.width = WindowManager.LayoutParams.WRAP_CONTENT
-            params.height = WindowManager.LayoutParams.WRAP_CONTENT
-            logView.text = "MOYU 运行中"
+            params.width = 360; params.height = 200
         }
         wm.updateViewLayout(overlayView, params)
     }

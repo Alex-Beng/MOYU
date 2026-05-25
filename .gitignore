@@ -14,4 +14,6 @@ __pycache__
 /.venv
 /saved_model
 *.png
+*.jpg
 *.tflite
+/floatlog.txt

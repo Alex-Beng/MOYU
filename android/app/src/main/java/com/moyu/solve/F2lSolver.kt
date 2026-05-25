@@ -1,5 +1,7 @@
 package com.moyu.solve
 
+import android.util.Log
+
 object F2lSolver {
     var f2lNodes = 0L
 
@@ -15,22 +17,42 @@ object F2lSolver {
         for (i in 0..3) {
             if (pairIsSolved(state, i)) solvedPairs.add(i)
         }
+        if (CfopSolver.DEBUG) {
+                Log.d("F2L", "solved pairs: $solvedPairs")
+                CfopSolver.logFn?.invoke("f2l solved pairs: $solvedPairs")
+            }
 
         for (step in 0..3) {
             val remaining = (0..3).filter { it !in solvedPairs }
             if (remaining.isEmpty()) break
 
             val heuristic = remaining.map { pairPrun[it][getPairCoord(state, it)].toInt() to it }.sortedBy { it.first }
+            if (CfopSolver.DEBUG) {
+                Log.d("F2L", "remaining: $heuristic")
+                CfopSolver.logFn?.invoke("f2l remaining heuristics: $heuristic")
+            }
 
             var found = false
             for ((_, pairIdx) in heuristic) {
+                if (CfopSolver.DEBUG) {
+                    Log.d("F2L", "solving pair $pairIdx...")
+                    CfopSolver.logFn?.invoke("f2l solving pair $pairIdx")
+                }
                 var path = solveF2lPair(state, pairIdx, pairPrun, pairMove, maxDepth = 6, protectedPairs = solvedPairs)
 
                 if (path == null && macroPrun != null && macroMove != null) {
+                    if (CfopSolver.DEBUG) {
+                        Log.d("F2L", "pair $pairIdx single failed, trying macro")
+                        CfopSolver.logFn?.invoke("f2l pair $pairIdx macro")
+                    }
                     path = solveF2lPairMacro(state, pairIdx, macroPrun, macroMove, maxDepth = 8, protectedPairs = solvedPairs)
                 }
 
                 if (path != null) {
+                    if (CfopSolver.DEBUG) {
+                        Log.d("F2L", "pair $pairIdx solved: ${path.size}m")
+                        CfopSolver.logFn?.invoke("f2l pair $pairIdx solved ${path.size}m")
+                    }
                     fullMoves.addAll(path)
                     for (m in path) state.applyMoveIdx(m)
                     if (!pairIsSolved(state, pairIdx)) return null
