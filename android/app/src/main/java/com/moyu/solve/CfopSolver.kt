@@ -82,7 +82,6 @@ class CfopSolver {
     private var initialized = false
 
     fun init() {
-        if (initialized) return
         dbg("init: building move tables...")
         val (pm, fm) = buildCrossMoveTables()
         permMove = pm; flipMove = fm

@@ -41,6 +41,12 @@ android {
     androidResources {
         noCompress += listOf("tflite")
     }
+
+    packaging {
+        jniLibs {
+            pickFirsts += listOf("**/libc++_shared.so")
+        }
+    }
 }
 
 dependencies {
@@ -56,6 +62,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.tflite)
     implementation(libs.kotlinx.coroutines.android)
+    implementation("com.quickbirdstudios:opencv:4.4.0")
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

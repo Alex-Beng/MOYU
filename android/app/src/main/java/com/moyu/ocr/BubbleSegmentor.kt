@@ -1,47 +1,74 @@
 package com.moyu.ocr
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import com.moyu.common.CharBubble
-import com.moyu.vision.HoughCircles
-import com.moyu.vision.ImageOps
+import org.opencv.android.Utils
+import org.opencv.core.Mat
+import org.opencv.core.Size
+import org.opencv.imgproc.Imgproc
 
 object BubbleSegmentor {
     const val CHAR_SIZE = 64
-    private val HOUGH_PARAMS = HoughCirclesParams(
-        dp = 1.0f,
-        minDist = 123,
-        param1 = 30,
-        param2 = 22,
-        minRadius = 51,
-        maxRadius = 60
-    )
+
+    private const val HOUGH_DP = 1.0
+    private const val HOUGH_MIN_DIST = 123.0
+    private const val HOUGH_PARAM1 = 30.0
+    private const val HOUGH_PARAM2 = 22.0
+    private const val HOUGH_MIN_RADIUS = 51
+    private const val HOUGH_MAX_RADIUS = 60
+
+    @Volatile private var opencvLoaded = false
+
+    private fun ensureOpenCV() {
+        if (opencvLoaded) return
+        System.loadLibrary("opencv_java4")
+        opencvLoaded = true
+    }
 
     fun segment(frame: Bitmap): List<CharBubble> {
-        val gray = ImageOps.toGrayscale(frame)
-        val circles = HoughCircles.detect(
-            gray, frame.width, frame.height,
-            dp = HOUGH_PARAMS.dp,
-            minDist = HOUGH_PARAMS.minDist,
-            param1 = HOUGH_PARAMS.param1,
-            param2 = HOUGH_PARAMS.param2,
-            minRadius = HOUGH_PARAMS.minRadius,
-            maxRadius = HOUGH_PARAMS.maxRadius
+        ensureOpenCV()
+        val src = Mat()
+        Utils.bitmapToMat(frame, src)
+
+        val gray = Mat()
+        Imgproc.cvtColor(src, gray, Imgproc.COLOR_RGBA2GRAY)
+
+        val blurred = Mat()
+        Imgproc.GaussianBlur(gray, blurred, Size(5.0, 5.0), 0.0)
+
+        val circlesMat = Mat()
+        Imgproc.HoughCircles(
+            blurred, circlesMat, Imgproc.HOUGH_GRADIENT,
+            HOUGH_DP, HOUGH_MIN_DIST,
+            HOUGH_PARAM1, HOUGH_PARAM2,
+            HOUGH_MIN_RADIUS, HOUGH_MAX_RADIUS
         )
 
-        val bubbles = mutableListOf<CharBubble>()
-        for (circle in circles) {
-            val crop = cropCircle(frame, circle.cx, circle.cy, circle.r)
-            bubbles.add(CharBubble(crop, circle.cx, circle.cy, circle.r))
+        src.release()
+        gray.release()
+        blurred.release()
 
-            for (i in 0..3) {
-                val nx = (circle.cx + 2.345 * circle.r * (i + 1)).toInt()
-                if (nx + circle.r < frame.width) {
-                    val extraCrop = cropCircle(frame, nx, circle.cy, circle.r)
-                    bubbles.add(CharBubble(extraCrop, nx, circle.cy, circle.r))
+        val bubbles = mutableListOf<CharBubble>()
+        for (i in 0 until circlesMat.cols()) {
+            val data = circlesMat.get(0, i) ?: continue
+            val cx = data[0].toInt()
+            val cy = data[1].toInt()
+            val r = data[2].toInt()
+
+            val crop = cropCircle(frame, cx, cy, r)
+            bubbles.add(CharBubble(crop, cx, cy, r))
+
+            for (j in 0..3) {
+                val nx = (cx + 2.345 * r * (j + 1)).toInt()
+                if (nx + r < frame.width) {
+                    val extraCrop = cropCircle(frame, nx, cy, r)
+                    bubbles.add(CharBubble(extraCrop, nx, cy, r))
                 }
             }
         }
+
+        bubbles.sortWith(compareBy({ it.cy / (HOUGH_MIN_DIST.toInt() / 2) }, { it.cx }))
+        circlesMat.release()
         return bubbles
     }
 
@@ -55,13 +82,4 @@ object BubbleSegmentor {
         val cropped = Bitmap.createBitmap(frame, x, y, w, h)
         return Bitmap.createScaledBitmap(cropped, CHAR_SIZE, CHAR_SIZE, true)
     }
-
-    private data class HoughCirclesParams(
-        val dp: Float,
-        val minDist: Int,
-        val param1: Int,
-        val param2: Int,
-        val minRadius: Int,
-        val maxRadius: Int
-    )
 }

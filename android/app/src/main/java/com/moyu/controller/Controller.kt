@@ -29,7 +29,7 @@ class Controller(private val context: Context, recipePath: String = "rank.json")
         log("食谱加载完成: ${cfg.name} mode=${cfg.mode} ${cfg.ui.size} 个UI特征")
         cfg
     }
-    private val cubeApi = CubeApi()
+    private val cubeApi = CubeApi(host = com.moyu.common.AppPrefs.espHost(context))
     private val mockCubeApi = MockCubeApi()
     internal val classifier: MoveClassifier = run {
         val clf = MoveClassifier(context)
@@ -43,7 +43,10 @@ class Controller(private val context: Context, recipePath: String = "rank.json")
     }
     internal val cfopSolver = CfopSolver()
 
-    var state: String = "init"
+    var state: String = recipe.initialState ?: when (recipe.mode) {
+        "semi", "remote" -> "scramble"
+        else -> "init"
+    }
     var mode: String = recipe.mode
 
     var scrambleSeenMove = false
@@ -102,11 +105,16 @@ class Controller(private val context: Context, recipePath: String = "rank.json")
             if (!running) break
             val handler = handlers[state]
             if (handler != null) {
-                val next = handler(this)
-                if (next != null && next != state) {
-                    log("状态: $state → $next")
-                    state = next
-                    applyDelay()
+                try {
+                    val next = handler(this)
+                    if (next != null && next != state) {
+                        log("状态: $state → $next")
+                        state = next
+                        applyDelay()
+                    }
+                } catch (e: Exception) {
+                    log("状态机异常 [$state]: ${e.message}")
+                    delay(1000)
                 }
             } else {
                 delay(1000)
@@ -118,21 +126,16 @@ class Controller(private val context: Context, recipePath: String = "rank.json")
     private suspend fun moveDispatchLoop() {
         for (item in moveChannel) {
             val api = if (useMockApi) mockCubeApi else cubeApi
-            val ok = when (item) {
-                is String -> api.sendMoves(item)
-                is List<*> -> api.sendMovesRaw(item as List<CubeCommand>)
-                else -> false
-            }
-            if (!ok) {
-                log("发送失败，重试...")
-                delay(1000)
-                when (item) {
+            try {
+                val ok = when (item) {
                     is String -> api.sendMoves(item)
                     is List<*> -> api.sendMovesRaw(item as List<CubeCommand>)
+                    else -> false
                 }
-            }
-            if (useMockApi) {
-                log("Mock: $item")
+                if (!ok) log("发送失败")
+                if (useMockApi) log("Mock: $item")
+            } catch (e: Exception) {
+                log("发送异常: ${e.message}")
             }
         }
     }
@@ -161,7 +164,12 @@ class Controller(private val context: Context, recipePath: String = "rank.json")
     suspend fun clickFeature(featureName: String): Boolean {
         val result = detector.detect(lastFrame()?.bitmap ?: return false, featureName)
         if (!result.matched) return false
-        com.moyu.service.MoyuAccessibilityService.instance?.tap(result.centerX, result.centerY)
+        val acc = com.moyu.service.MoyuAccessibilityService.instance
+        if (acc == null) {
+            log("⚠️ 无障碍服务未开启，无法点击 $featureName")
+            return false
+        }
+        acc.tap(result.centerX, result.centerY)
         log("点击: $featureName")
         delay(500)
         return true

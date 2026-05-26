@@ -6,6 +6,8 @@ import com.moyu.ocr.MoveParser
 import kotlinx.coroutines.delay
 
 suspend fun rankInit(ctrl: Controller): String? {
+    ctrl.scrambleSeenMove = false
+    ctrl.noScrambleCnt = 0
     ctrl.log("rank/init: 等待 begin_rank...")
     val result = ctrl.waitForUi("begin_rank", 60_000L) ?: return "init"
     ctrl.clickFeature("begin_rank")
@@ -23,9 +25,11 @@ suspend fun rankScramble(ctrl: Controller): String? {
 
     try {
         val bubbles = BubbleSegmentor.segment(crop)
+        ctrl.log("OCR: 检测到 ${bubbles.size} 个气泡")
         if (bubbles.isNotEmpty()) {
             val labels = ctrl.classifier.predictBatch(bubbles.map { it.bitmap })
             val moves = MoveParser.parse(labels)
+            ctrl.log("OCR: labels=$labels moves=$moves")
             if (moves.isNotEmpty()) {
                 ctrl.scrambleSeenMove = true
                 ctrl.noScrambleCnt = 0
@@ -33,17 +37,19 @@ suspend fun rankScramble(ctrl: Controller): String? {
                 ctrl.log("打乱: $moves")
                 delay(500)
             } else {
-                ctrl.log("OCR: ${labels.size} bubbles → raw=$labels → no valid moves")
                 ctrl.noScrambleCnt++
                 if (ctrl.scrambleSeenMove && ctrl.noScrambleCnt > 1) {
+                    ctrl.scrambleSeenMove = false
+                    ctrl.noScrambleCnt = 0
                     delay(1000)
                     return "solve"
                 }
             }
         } else {
-            ctrl.log("OCR: 0 bubbles detected")
             ctrl.noScrambleCnt++
             if (ctrl.scrambleSeenMove && ctrl.noScrambleCnt > 1) {
+                ctrl.scrambleSeenMove = false
+                ctrl.noScrambleCnt = 0
                 delay(1000)
                 return "solve"
             }
@@ -73,13 +79,17 @@ suspend fun rankSolve(ctrl: Controller): String? {
         ctrl.log("解法: ${result.solution} (${result.solution.split(" ").size}步)")
         ctrl.queueCommands(ctrl.buildPhasedMoves(result))
 
+        ctrl.scrambleSeenMove = false
+        ctrl.noScrambleCnt = 0
+        ctrl.log("rank/solve: 同时检测 scramble 和 end_rank/re_rank...")
         val start = System.currentTimeMillis()
         val timeout = 180_000L
         while (System.currentTimeMillis() - start < timeout) {
-            val frame = ctrl.lastFrameBitmap() ?: run { delay(1000); continue }
+            val frame = ctrl.lastFrameBitmap() ?: run { delay(500); continue }
 
-            val (endName, _) = ctrl.detector.detectAny(frame,
+            val result = ctrl.detector.detectAny(frame,
                 listOf("end_rank", "re_rank"))
+            val endName = result.first
             when (endName) {
                 "end_rank" -> {
                     ctrl.clickFeature("end_rank")
@@ -92,14 +102,19 @@ suspend fun rankSolve(ctrl: Controller): String? {
                     return "scramble"
                 }
             }
+            val feature = ctrl.recipe.feature("scramble_area")
+            val crop = if (feature != null && feature.roi != null) {
+                val r = feature.roi
+                Bitmap.createBitmap(frame, r.x, r.y, r.w, r.h)
+            } else frame
             try {
-                val bubbles = BubbleSegmentor.segment(frame)
-                if (bubbles.size >= 2) {
+                val bubbles = BubbleSegmentor.segment(crop)
+                if (bubbles.isNotEmpty()) {
                     ctrl.log("检测到新打乱")
                     return "scramble"
                 }
             } catch (_: Exception) {}
-            delay(2000)
+            delay(500)
         }
         return "solve"
     } catch (e: Exception) {
@@ -110,14 +125,24 @@ suspend fun rankSolve(ctrl: Controller): String? {
 }
 
 suspend fun rankReRank(ctrl: Controller): String? {
+    ctrl.scrambleSeenMove = false
+    ctrl.noScrambleCnt = 0
     ctrl.log("rank/re_rank: 等待 re_rank...")
-    val result = ctrl.waitForUi("re_rank", 30_000L) ?: run {
-        delay(1000)
-        return "re_rank"
+    val result = ctrl.waitForUi("re_rank", 5_000L)
+    if (result != null) {
+        ctrl.clickFeature("re_rank")
+        delay(2000)
+        return "scramble"
     }
-    ctrl.clickFeature("re_rank")
-    delay(2000)
-    return "scramble"
+    ctrl.log("rank/re_rank: 超时，可能被踢回 begin 界面")
+    val beginResult = ctrl.waitForUi("begin_rank", 5_000L)
+    if (beginResult != null) {
+        ctrl.clickFeature("begin_rank")
+        delay(2000)
+        return "scramble"
+    }
+    delay(1000)
+    return "re_rank"
 }
 
 suspend fun semiScramble(ctrl: Controller): String? = rankScramble(ctrl).also {
@@ -127,10 +152,32 @@ suspend fun semiScramble(ctrl: Controller): String? = rankScramble(ctrl).also {
 suspend fun semiSolve(ctrl: Controller): String? {
     ctrl.log("semi/solve")
     val facelets = ctrl.getFacelets()
-    if (facelets.length != 54) return "solve"
-    val result = ctrl.solver.solve(facelets, ctrl.recipe.rotation) ?: return "solve"
-    ctrl.queueCommands(ctrl.buildPhasedMoves(result))
-    delay(5000)
+    if (facelets.length != 54) { delay(1000); return "solve" }
+    val result = ctrl.solver.solve(facelets, ctrl.recipe.rotation)
+    if (result != null && result.solution.isNotBlank()) {
+        ctrl.queueCommands(ctrl.buildPhasedMoves(result))
+    }
+    ctrl.scrambleSeenMove = false
+    ctrl.noScrambleCnt = 0
+    ctrl.log("semi/solve: 等待下一把打乱出现...")
+    val start = System.currentTimeMillis()
+    while (System.currentTimeMillis() - start < 60_000L) {
+        delay(1000)
+        val frame = ctrl.lastFrameBitmap() ?: continue
+        val feature = ctrl.recipe.feature("scramble_area")
+        val crop = if (feature != null && feature.roi != null) {
+            val r = feature.roi
+            Bitmap.createBitmap(frame, r.x, r.y, r.w, r.h)
+        } else frame
+        try {
+            val bubbles = BubbleSegmentor.segment(crop)
+            if (bubbles.isNotEmpty()) {
+                ctrl.log("semi/solve: 检测到打乱气泡，进入 scramble")
+                return "scramble"
+            }
+        } catch (_: Exception) {}
+    }
+    ctrl.log("semi/solve: 超时未检测到打乱，仍进入 scramble")
     return "scramble"
 }
 

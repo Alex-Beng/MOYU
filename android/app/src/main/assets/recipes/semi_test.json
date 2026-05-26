@@ -1,0 +1,11 @@
+{
+    "name": "semi solve test",
+    "mode": "semi",
+    "initial_state": "solve",
+    "device": {
+        "width": 1080,
+        "height": 2400
+    },
+    "solve_delay": 90,
+    "ui": {}
+}

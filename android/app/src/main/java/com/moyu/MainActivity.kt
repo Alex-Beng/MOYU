@@ -43,8 +43,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.moyu.common.AppPrefs
+import com.moyu.recipe.RecipeLoader
 import com.moyu.service.FloatLogService
+import com.moyu.service.MoyuAccessibilityService
 import com.moyu.service.ScreenCaptureService
+import com.moyu.ui.EspTestScreen
 import com.moyu.ui.RecipeEditorScreen
 import com.moyu.ui.theme.MOYUTheme
 import kotlinx.coroutines.launch
@@ -54,6 +58,9 @@ class MainActivity : ComponentActivity() {
 
     private var ready by mutableStateOf(false)
     private var recipe: String = "rank.json"
+
+    private fun savedRecipe(): String = AppPrefs.lastRecipe(this)
+    private fun saveRecipe(name: String) = AppPrefs.saveRecipe(this, name)
     private val overlayLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { startFloatLog() }
@@ -81,13 +88,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        RecipeLoader.syncAssets(this)
+        recipe = savedRecipe()
         enableEdgeToEdge()
         setContent {
             MOYUTheme {
                 MainScreen(
                     ready = ready,
-                    onRecipeSelected = { recipe = it },
-                    onStart = { startFloatLog() }
+                    initialRecipe = savedRecipe(),
+                    onRecipeSelected = { recipe = it; saveRecipe(it) },
+                    onStart = { startFloatLog() },
+                    onOpenAccessibility = {
+                        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    }
                 )
             }
         }
@@ -123,18 +136,18 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(ready: Boolean, onRecipeSelected: (String) -> Unit, onStart: () -> Unit) {
+fun MainScreen(ready: Boolean, initialRecipe: String, onRecipeSelected: (String) -> Unit, onStart: () -> Unit, onOpenAccessibility: () -> Unit) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var currentTab by remember { mutableIntStateOf(0) }
 
     val context = LocalContext.current
-    val recipeFiles = remember {
+    val recipeFiles = remember(currentTab) {
         val dir = context.filesDir.resolve("recipes")
         dir.mkdirs()
         dir.listFiles()?.filter { it.extension == "json" }?.map { it.name }?.sorted() ?: listOf("rank.json")
     }
-    var selectedRecipe by remember { mutableStateOf("rank.json") }
+    var selectedRecipe by remember { mutableStateOf(initialRecipe) }
     var recipeExpanded by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -153,6 +166,10 @@ fun MainScreen(ready: Boolean, onRecipeSelected: (String) -> Unit, onStart: () -
                 TextButton(onClick = { currentTab = 1 }) {
                     Text("编辑", color = if (currentTab == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                 }
+                Spacer(Modifier.width(16.dp))
+                TextButton(onClick = { currentTab = 2 }) {
+                    Text("测试", color = if (currentTab == 2) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                }
             }
 
             when (currentTab) {
@@ -163,11 +180,13 @@ fun MainScreen(ready: Boolean, onRecipeSelected: (String) -> Unit, onStart: () -
                     recipeExpanded = recipeExpanded,
                     onRecipeChange = { selectedRecipe = it; recipeExpanded = false; onRecipeSelected(it) },
                     onRecipeExpand = { recipeExpanded = it },
-                    onStart = onStart
+                    onStart = onStart,
+                    onOpenAccessibility = onOpenAccessibility
                 )
                 1 -> RecipeEditorScreen(onSnackbar = { msg ->
                     scope.launch { snackbarHostState.showSnackbar(msg) }
                 })
+                2 -> EspTestScreen()
             }
         }
     }
@@ -182,8 +201,12 @@ private fun ControlContent(
     recipeExpanded: Boolean,
     onRecipeChange: (String) -> Unit,
     onRecipeExpand: (Boolean) -> Unit,
-    onStart: () -> Unit
+    onStart: () -> Unit,
+    onOpenAccessibility: () -> Unit
 ) {
+    val context = LocalContext.current
+    val accEnabled = MoyuAccessibilityService.instance != null
+
     Column(
         modifier = Modifier.fillMaxSize().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -193,6 +216,23 @@ private fun ControlContent(
         Spacer(modifier = Modifier.height(16.dp))
         Text(if (ready) "正在运行…" else "魔方自动控制器", style = MaterialTheme.typography.bodyLarge)
         Spacer(modifier = Modifier.height(24.dp))
+
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = if (accEnabled) "无障碍: 已开启" else "无障碍: 未开启",
+                color = if (accEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            if (!accEnabled) {
+                TextButton(onClick = onOpenAccessibility) { Text("去开启") }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         ExposedDropdownMenuBox(
             expanded = recipeExpanded,

@@ -25,6 +25,7 @@ data class RecipeConfig(
     val ollDelay: Int?,
     val rotation: String?,
     val moveFormat: String,
+    val initialState: String?,
     val ui: Map<String, UiFeature>
 ) {
     fun feature(name: String): UiFeature? = ui[name]
@@ -47,20 +48,21 @@ object RecipeLoader {
         return Roi(x, y, w, h)
     }
 
-    fun load(context: Context, assetPath: String = "rank.json"): RecipeConfig {
+    fun syncAssets(context: Context) {
         val recipeDir = context.filesDir.resolve("recipes")
-        val targetFile = recipeDir.resolve(assetPath)
-        if (!targetFile.exists()) {
-            recipeDir.mkdirs()
-            val entries = context.assets.list("recipes") ?: emptyArray()
-            for (name in entries) {
-                context.assets.open("recipes/$name").use { src ->
-                    context.filesDir.resolve("recipes/$name").outputStream().use { dst ->
-                        src.copyTo(dst)
-                    }
-                }
+        recipeDir.mkdirs()
+        val entries = context.assets.list("recipes") ?: emptyArray()
+        for (name in entries) {
+            context.assets.open("recipes/$name").use { src ->
+                recipeDir.resolve(name).outputStream().use { dst -> src.copyTo(dst) }
             }
         }
+    }
+
+    fun load(context: Context, assetPath: String = "rank.json"): RecipeConfig {
+        syncAssets(context)
+        val recipeDir = context.filesDir.resolve("recipes")
+        val targetFile = recipeDir.resolve(assetPath)
         val jsonString = targetFile.bufferedReader().readText()
         val root = JSONObject(jsonString)
         val device = root.getJSONObject("device")
@@ -87,6 +89,7 @@ object RecipeLoader {
             ollDelay = root.optInt("oll_delay", 0).takeIf { it > 0 },
             rotation = root.optString("rotation", null).takeIf { !it.isNullOrBlank() },
             moveFormat = root.optString("move_format", "dir"),
+            initialState = root.optString("initial_state", null).takeIf { !it.isNullOrBlank() },
             ui = ui
         )
     }

@@ -109,24 +109,32 @@ object ImageOps {
     internal fun hysteresis(nms: IntArray, w: Int, h: Int, low: Int, high: Int): IntArray {
         val result = IntArray(nms.size)
         val visited = BooleanArray(nms.size)
+        val stack = ArrayDeque<Int>()
 
-        fun dfs(x: Int, y: Int) {
+        fun push(x: Int, y: Int) {
             if (x < 0 || x >= w || y < 0 || y >= h) return
             val idx = y * w + x
-            if (visited[idx] || result[idx] != 0) return
-            if (nms[idx] >= low) {
+            if (!visited[idx] && nms[idx] >= low) {
                 visited[idx] = true
                 result[idx] = 255
-                for (dy in -1..1) for (dx in -1..1) {
-                    if (dx != 0 || dy != 0) dfs(x + dx, y + dy)
-                }
+                stack.addLast(idx)
             }
         }
 
         for (y in 0 until h) for (x in 0 until w) {
             val idx = y * w + x
             if (!visited[idx] && nms[idx] >= high) {
-                dfs(x, y)
+                visited[idx] = true
+                result[idx] = 255
+                stack.addLast(idx)
+                while (stack.isNotEmpty()) {
+                    val cur = stack.removeLast()
+                    val cx = cur % w
+                    val cy = cur / w
+                    for (dy in -1..1) for (dx in -1..1) {
+                        if (dx != 0 || dy != 0) push(cx + dx, cy + dy)
+                    }
+                }
             }
         }
         return result

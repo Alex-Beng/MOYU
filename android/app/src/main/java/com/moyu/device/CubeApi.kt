@@ -90,14 +90,15 @@ class CubeApi(
                     obj.put("face", m.face)
                     obj.put("dir", m.dir)
                 }
-
                 is CubeMoveStr -> obj.put("move", m.move)
                 is CubeDelay -> obj.put("delay", m.ms)
             }
             arr.put(obj)
         }
-        val resp = post("/api/moves", arr.toString())
-        return resp.contains("ok", ignoreCase = true)
+        val body = arr.toString()
+        val resp = post("/api/moves", body)
+        android.util.Log.d("CubeApi", "sendMovesRaw resp=$resp")
+        return resp.isNotBlank()
     }
 
     override suspend fun setDelay(ms: Int): Boolean {
