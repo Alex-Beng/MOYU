@@ -240,5 +240,10 @@ class Controller(private val context: Context, recipePath: String = "rank.json")
     }
 
     internal val solver: CfopSolver get() = cfopSolver
-    internal fun lastFrameBitmap(): Bitmap? = lastFrame()?.bitmap
+    internal fun lastFrameBitmap(): Bitmap? {
+        val svc = ScreenCaptureService.instance ?: return null
+        val frame = svc.lastFrame() ?: return null
+        if (frame.timestampMs < svc.captureStartTimeMs) return null
+        return frame.bitmap
+    }
 }

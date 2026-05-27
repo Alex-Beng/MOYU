@@ -37,8 +37,10 @@ class ScreenCaptureService : Service() {
     @Volatile private var capturing = false
     private var recentFrame: Frame? = null
     private var recipeExtra: String? = null
-    private var screenW = 0
-    private var screenH = 0
+    var screenW = 0
+        private set
+    var screenH = 0
+        private set
     private var screenDpi = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -90,15 +92,21 @@ class ScreenCaptureService : Service() {
     }
 
     private fun getScreenSize(): Pair<Int, Int> {
+        screenDpi = resources.displayMetrics.densityDpi
         val wm = getSystemService(WINDOW_SERVICE) as android.view.WindowManager
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = wm.currentWindowMetrics.bounds
-            Pair(bounds.width(), bounds.height())
+            val metrics = wm.maximumWindowMetrics
+            Pair(metrics.bounds.width(), metrics.bounds.height())
         } else {
             @Suppress("DEPRECATION")
-            Pair(wm.defaultDisplay.width, wm.defaultDisplay.height)
+            val outSize = android.graphics.Point()
+            wm.defaultDisplay.getRealSize(outSize)
+            Pair(outSize.x, outSize.y)
         }
     }
+
+    private var captureStartTime = 0L
+    val captureStartTimeMs get() = captureStartTime
 
     private fun setupCapture() {
         val mp = mediaProjection ?: return
@@ -108,6 +116,7 @@ class ScreenCaptureService : Service() {
             screenW = w
             screenH = h
             screenDpi = resources.displayMetrics.densityDpi
+            captureStartTime = System.currentTimeMillis()
 
             val reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
             val vd = mp.createVirtualDisplay(
@@ -147,6 +156,7 @@ class ScreenCaptureService : Service() {
         virtualDisplay = null
         imageReader?.close()
         imageReader = null
+        recentFrame = null
     }
 
     fun lastFrame(): Frame? = recentFrame
