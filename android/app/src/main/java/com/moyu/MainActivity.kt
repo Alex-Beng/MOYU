@@ -104,20 +104,22 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+        autoRequestOverlayPermission()
+    }
+
+    private fun autoRequestOverlayPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            overlayLauncher.launch(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+            )
+        }
     }
 
     private fun checkAndStart() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            AlertDialog.Builder(this)
-                .setTitle("需要权限")
-                .setMessage("需要悬浮窗权限才能显示控制界面")
-                .setPositiveButton("去设置") { _, _ ->
-                    overlayLauncher.launch(
-                        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-                    )
-                }
-                .setNegativeButton("取消", null)
-                .show()
+            overlayLauncher.launch(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+            )
         } else {
             startFloatLog()
         }

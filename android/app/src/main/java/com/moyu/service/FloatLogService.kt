@@ -18,6 +18,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -41,6 +42,9 @@ class FloatLogService : Service() {
     private lateinit var btnStop: TextView
     private lateinit var btnRestart: TextView
     private lateinit var lblRestartState: TextView
+    private lateinit var frameThumb: ImageView
+    private val thumbHandler = Handler(Looper.getMainLooper())
+    private var thumbRunnable: Runnable? = null
     private var isExpanded = false
     private var initialX = 0
     private var initialY = 0
@@ -64,6 +68,7 @@ class FloatLogService : Service() {
 
     override fun onDestroy() {
         instance = null
+        thumbRunnable?.let { thumbHandler.removeCallbacks(it) }
         if (::overlayView.isInitialized) wm.removeView(overlayView)
         super.onDestroy()
     }
@@ -184,6 +189,18 @@ class FloatLogService : Service() {
         }
         overlayView.addView(scrollView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
+        // ── Frame thumbnail ──
+        frameThumb = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setBackgroundColor(0xFF111111.toInt())
+            contentDescription = "screen"
+        }
+        overlayView.addView(frameThumb, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 120
+        ))
+
+        scrollView.visibility = android.view.View.GONE
+
         // Drag-to-move on control bar only (not on log area)
         controlBar.setOnTouchListener { _, event ->
             when (event.action) {
@@ -220,23 +237,45 @@ class FloatLogService : Service() {
         }
 
         val params = WindowManager.LayoutParams(
-            360, 200, flags,
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT, flags,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 0; y = 200
+            x = 0; y = 0
         }
         wm.addView(overlayView, params)
+        startThumbUpdater()
+    }
+
+    private fun startThumbUpdater() {
+        val r = object : Runnable {
+            override fun run() {
+                val bmp = ScreenCaptureService.instance?.lastFrame()?.bitmap
+                if (bmp != null && !bmp.isRecycled) {
+                    val targetW = 240
+                    val targetH = targetW * bmp.height / bmp.width
+                    val thumb = android.graphics.Bitmap.createScaledBitmap(bmp, targetW, targetH, false)
+                    frameThumb.setImageBitmap(thumb)
+                }
+                thumbHandler.postDelayed(this, 500)
+            }
+        }
+        thumbRunnable = r
+        thumbHandler.post(r)
     }
 
     private fun toggleExpand() {
         isExpanded = !isExpanded
         val params = overlayView.layoutParams as WindowManager.LayoutParams
         if (isExpanded) {
-            params.width = 600; params.height = 600
+            scrollView.visibility = android.view.View.VISIBLE
+            frameThumb.visibility = android.view.View.VISIBLE
+            params.height = 600
         } else {
-            params.width = 360; params.height = 200
+            scrollView.visibility = android.view.View.GONE
+            frameThumb.visibility = android.view.View.VISIBLE
+            params.height = WindowManager.LayoutParams.WRAP_CONTENT
         }
         wm.updateViewLayout(overlayView, params)
     }
