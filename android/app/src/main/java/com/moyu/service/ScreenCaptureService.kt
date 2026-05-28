@@ -136,7 +136,9 @@ class ScreenCaptureService : Service() {
                     val bmp = Bitmap.createBitmap(w + rowPadding / pixelStride, h, Bitmap.Config.ARGB_8888)
                     bmp.copyPixelsFromBuffer(buffer)
                     image.close()
+                    val old = recentFrame?.bitmap
                     recentFrame = Frame(bmp, System.currentTimeMillis())
+                    if (old != null && !old.isRecycled) old.recycle()
                 } catch (_: Throwable) {}
             }, handler)
 

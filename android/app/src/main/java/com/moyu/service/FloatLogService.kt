@@ -94,9 +94,13 @@ class FloatLogService : Service() {
         logView.post {
             val ts = SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
             val line = "$ts $msg"
-            val ss = SpannableString("\n$line")
+            val current = logView.text.toString()
+            val lines = current.split("\n").takeLast(200)
+            val newText = (lines + line).joinToString("\n")
+            logView.text = ""
+            val ss = SpannableString(newText)
             ss.setSpan(ForegroundColorSpan(Color.GREEN), 0, ss.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            logView.append(ss)
+            logView.setText(ss)
             scrollView.post { scrollView.fullScroll(ScrollView.FOCUS_DOWN) }
         }
     }
@@ -256,7 +260,9 @@ class FloatLogService : Service() {
                     val targetW = 240
                     val targetH = targetW * bmp.height / bmp.width
                     val thumb = android.graphics.Bitmap.createScaledBitmap(bmp, targetW, targetH, false)
+                    val old = (frameThumb.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
                     frameThumb.setImageBitmap(thumb)
+                    if (old != null && !old.isRecycled) old.recycle()
                 }
                 thumbHandler.postDelayed(this, 500)
             }
