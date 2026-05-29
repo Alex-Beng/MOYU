@@ -240,10 +240,16 @@ class Controller(private val context: Context, recipePath: String = "rank.json")
     }
 
     internal val solver: CfopSolver get() = cfopSolver
+    internal suspend fun clearMoves() {
+        (cubeApi as? com.moyu.device.CubeApi)?.clearMoves()
+    }
+
     internal fun lastFrameBitmap(): Bitmap? {
         val svc = ScreenCaptureService.instance ?: return null
         val frame = svc.lastFrame() ?: return null
         if (frame.timestampMs < svc.captureStartTimeMs) return null
-        return frame.bitmap
+        val bmp = frame.bitmap
+        if (bmp.isRecycled) return null
+        return bmp
     }
 }

@@ -25,25 +25,12 @@ suspend fun rankScramble(ctrl: Controller): String? {
     } else frame
 
     try {
-        try {
-            val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-            dir.mkdirs()
-            crop.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, java.io.File(dir, "frame_crop.png").outputStream())
-            ctrl.log("OCR: frame_crop saved ${crop.width}x${crop.height}")
-        } catch (e: Exception) { ctrl.log("OCR: save failed ${e.message}") }
-
         val bubbles = BubbleSegmentor.segment(crop)
         ctrl.log("OCR: 检测到 ${bubbles.size} 个气泡 (frame=${crop.width}x${crop.height})")
         if (bubbles.isNotEmpty()) {
-            try {
-                val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-                dir.mkdirs()
-                val f0 = java.io.File(dir, "bubble0.png")
-                bubbles[0].bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, f0.outputStream())
-                val fc = java.io.File(dir, "frame_crop.png")
-                crop.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, fc.outputStream())
-                ctrl.log("OCR: saved bubble0+frame_crop to Downloads")
-            } catch (e: Exception) { ctrl.log("OCR: save failed ${e.message}") }
+            // if (!ctrl.scrambleSeenMove) {
+            //     ctrl.clearMoves()
+            // }
             val labels = ctrl.classifier.predictBatch(bubbles.map { it.bitmap })
             val moves = MoveParser.parse(labels)
             ctrl.log("OCR: labels=$labels moves=$moves")
@@ -180,9 +167,7 @@ suspend fun semiSolve(ctrl: Controller): String? {
     val start = System.currentTimeMillis()
     while (System.currentTimeMillis() - start < 60_000L) {
         delay(1000)
-        val frame = ctrl.lastFrameBitmap()
-        ctrl.log("semi/solve: waiting frame=${frame?.width}x${frame?.height} svcW=${com.moyu.service.ScreenCaptureService.instance?.screenW} captureStart=${com.moyu.service.ScreenCaptureService.instance?.captureStartTimeMs} lastFrameTs=${com.moyu.service.ScreenCaptureService.instance?.lastFrame()?.timestampMs}")
-        if (frame == null) continue
+        val frame = ctrl.lastFrameBitmap() ?: continue
         val feature = ctrl.recipe.feature("scramble_area")
         val crop = if (feature != null && feature.roi != null) {
             val r = feature.roi

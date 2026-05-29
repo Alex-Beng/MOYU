@@ -43,6 +43,7 @@ class FloatLogService : Service() {
     private lateinit var btnRestart: TextView
     private lateinit var lblRestartState: TextView
     private lateinit var frameThumb: ImageView
+    private lateinit var lastLogView: TextView
     private val thumbHandler = Handler(Looper.getMainLooper())
     private var thumbRunnable: Runnable? = null
     private var isExpanded = false
@@ -92,7 +93,7 @@ class FloatLogService : Service() {
     fun appendLog(msg: String) {
         android.util.Log.d("FloatLog", msg)
         logView.post {
-            val ts = SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+            val ts = SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(Date())
             val line = "$ts $msg"
             val current = logView.text.toString()
             val lines = current.split("\n").takeLast(200)
@@ -102,6 +103,7 @@ class FloatLogService : Service() {
             ss.setSpan(ForegroundColorSpan(Color.GREEN), 0, ss.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             logView.setText(ss)
             scrollView.post { scrollView.fullScroll(ScrollView.FOCUS_DOWN) }
+            lastLogView.text = msg
         }
     }
 
@@ -181,17 +183,16 @@ class FloatLogService : Service() {
 
         overlayView.addView(controlBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        // ── Log area ──
-        logView = TextView(this).apply {
-            text = "MOYU 启动完成"
-            setTextColor(Color.GREEN)
-            textSize = 12f
-            setPadding(8, 8, 8, 8)
+        // ── Last log line ──
+        lastLogView = TextView(this).apply {
+            setTextColor(Color.CYAN)
+            textSize = 10f
+            setPadding(8, 2, 8, 2)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.START
+            text = ""
         }
-        scrollView = ScrollView(this).apply {
-            addView(logView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        }
-        overlayView.addView(scrollView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        overlayView.addView(lastLogView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         // ── Frame thumbnail ──
         frameThumb = ImageView(this).apply {
@@ -202,6 +203,18 @@ class FloatLogService : Service() {
         overlayView.addView(frameThumb, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 120
         ))
+
+        // ── Log area ──
+        logView = TextView(this).apply {
+            text = "MOYU 启动完成"
+            setTextColor(Color.GREEN)
+            textSize = 12f
+            setPadding(8, 8, 8, 8)
+        }
+        scrollView = ScrollView(this).apply {
+            addView(logView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        overlayView.addView(scrollView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 400))
 
         scrollView.visibility = android.view.View.GONE
 
@@ -240,8 +253,9 @@ class FloatLogService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        val dpW = (300 * resources.displayMetrics.density).toInt()
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT, flags,
+            dpW, WindowManager.LayoutParams.WRAP_CONTENT, flags,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
@@ -255,14 +269,13 @@ class FloatLogService : Service() {
     private fun startThumbUpdater() {
         val r = object : Runnable {
             override fun run() {
-                val bmp = ScreenCaptureService.instance?.lastFrame()?.bitmap
+                val raw = ScreenCaptureService.instance?.lastFrame()?.bitmap
+                val bmp = if (raw != null && !raw.isRecycled) raw else null
                 if (bmp != null && !bmp.isRecycled) {
-                    val targetW = 240
+                    val targetW = overlayView.width.takeIf { it > 0 } ?: 300
                     val targetH = targetW * bmp.height / bmp.width
                     val thumb = android.graphics.Bitmap.createScaledBitmap(bmp, targetW, targetH, false)
-                    val old = (frameThumb.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
                     frameThumb.setImageBitmap(thumb)
-                    if (old != null && !old.isRecycled) old.recycle()
                 }
                 thumbHandler.postDelayed(this, 500)
             }
@@ -276,11 +289,9 @@ class FloatLogService : Service() {
         val params = overlayView.layoutParams as WindowManager.LayoutParams
         if (isExpanded) {
             scrollView.visibility = android.view.View.VISIBLE
-            frameThumb.visibility = android.view.View.VISIBLE
-            params.height = 600
+            params.height = WindowManager.LayoutParams.WRAP_CONTENT
         } else {
             scrollView.visibility = android.view.View.GONE
-            frameThumb.visibility = android.view.View.VISIBLE
             params.height = WindowManager.LayoutParams.WRAP_CONTENT
         }
         wm.updateViewLayout(overlayView, params)

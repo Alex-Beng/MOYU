@@ -206,6 +206,10 @@ class CubeAPI:
         result = await self._request("GET", "/api/delay")
         return result.get("delay")
 
+    async def clear_moves(self) -> dict:
+        """清空固件队列中残留的转动序列。"""
+        return await self._request("POST", "/api/moves/clear", json={})
+
     async def get_state(self) -> dict:
         """获取当前魔方状态 JSON。"""
         return await self._request("GET", "/api/state")

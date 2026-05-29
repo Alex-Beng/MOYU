@@ -36,6 +36,7 @@ class ScreenCaptureService : Service() {
     private var captureHandler: Handler? = null
     @Volatile private var capturing = false
     private var recentFrame: Frame? = null
+    private val frameLock = Any()
     private var recipeExtra: String? = null
     var screenW = 0
         private set
@@ -95,7 +96,7 @@ class ScreenCaptureService : Service() {
         screenDpi = resources.displayMetrics.densityDpi
         val wm = getSystemService(WINDOW_SERVICE) as android.view.WindowManager
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val metrics = wm.maximumWindowMetrics
+            val metrics = wm.currentWindowMetrics
             Pair(metrics.bounds.width(), metrics.bounds.height())
         } else {
             @Suppress("DEPRECATION")
@@ -136,8 +137,12 @@ class ScreenCaptureService : Service() {
                     val bmp = Bitmap.createBitmap(w + rowPadding / pixelStride, h, Bitmap.Config.ARGB_8888)
                     bmp.copyPixelsFromBuffer(buffer)
                     image.close()
-                    val old = recentFrame?.bitmap
-                    recentFrame = Frame(bmp, System.currentTimeMillis())
+                    val newFrame = Frame(bmp, System.currentTimeMillis())
+                    val old = synchronized(frameLock) {
+                        val prev = recentFrame?.bitmap
+                        recentFrame = newFrame
+                        prev
+                    }
                     if (old != null && !old.isRecycled) old.recycle()
                 } catch (_: Throwable) {}
             }, handler)
@@ -158,10 +163,16 @@ class ScreenCaptureService : Service() {
         virtualDisplay = null
         imageReader?.close()
         imageReader = null
-        recentFrame = null
+        synchronized(frameLock) { recentFrame = null }
     }
 
-    fun lastFrame(): Frame? = recentFrame
+    fun lastFrame(): Frame? = synchronized(frameLock) {
+        val f = recentFrame ?: return null
+        if (f.bitmap.isRecycled) return null
+        try {
+            Frame(f.bitmap.copy(f.bitmap.config ?: Bitmap.Config.ARGB_8888, false), f.timestampMs)
+        } catch (_: Exception) { null }
+    }
 
     private fun restartController() {
         FloatLogService.instance?.appendLog("屏幕旋转，重启控制器...")

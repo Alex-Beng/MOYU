@@ -236,6 +236,8 @@ async def _semi_scramble(self: Controller) -> str:
 
     chars = segment(crop)
     if chars and self.classifier:
+        # if not self._scramble_seen_move:
+        #     await self.cube.clear_moves()
         char_imgs = [c[0] for c in chars]
         labels = self.classifier.predict_batch(char_imgs)
         moves = parse(labels)
@@ -324,6 +326,8 @@ async def _rank_scramble(self: Controller) -> str:
 
     chars = segment(crop)
     if chars:
+        # if not self._scramble_seen_move:
+        #     await self.cube.clear_moves()
         logger.debug("rank/scramble: 检测到 %d 个字符区域，识别中...", len(chars))
         if self.classifier:
             char_imgs = [c[0] for c in chars]

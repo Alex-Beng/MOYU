@@ -76,6 +76,15 @@ class CubeApi(
         return get("/api/facelets").trim()
     }
 
+    suspend fun clearMoves(): Boolean {
+        return try {
+            post("/api/moves/clear", "{}").isNotBlank()
+        } catch (e: Exception) {
+            android.util.Log.w("CubeApi", "clearMoves failed: ${e.message}")
+            false
+        }
+    }
+
     override suspend fun sendMoves(notation: String): Boolean {
         val moves = parseMoveNotation(notation)
         return sendMovesRaw(moves)
