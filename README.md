@@ -1,261 +1,361 @@
-# **MOYU** = **M**ore **O**nline **Y**our  smart-c**U**be
+# **MOYU** = **M**ore **O**nline **Y**our smart-c**U**be
 
 MOYU 是基于硬件模拟智能魔方，意图实现人类摸鱼（MOYU），机器自动上分的项目。
 
 ## 架构
 
-需要：ESP32-C3 + 安卓手机 + 电脑
+需要：ESP32-C3 + 安卓手机 + 电脑（Python 版）或仅 ESP32-C3 + 安卓手机（Android 版）
 
 - ESP32-C3 运行 [gan-cube-emu](../gan-cube-emu)，BLE 模拟 GAN 智能魔方
 - 安卓手机运行 Cube Station，通过 BLE 与 ESP32 连接
-- 电脑作为主控制器与求解器，通过 scrcpy 控制手机，通过 WiFi HTTP 控制 ESP32
+- **Python 版**：电脑作为主控制器，通过 scrcpy 控制手机，通过 WiFi HTTP 控制 ESP32
+- **Android 版**：控制器直接运行在手机上（APK），无需 PC，通过 WiFi HTTP 控制 ESP32
+
+---
+
+## 功能特性对比
+
+| 特性 | Python 版 | Android Kotlin 版 |
+|------|-----------|-------------------|
+| **运行模式** | rank / semi / holder / team / week / remote | rank / semi / holder / team / week / remote |
+| **屏幕捕获** | scrcpy 客户端（USB/WiFi） | MediaProjection API（系统授权） |
+| **UI 点击** | scrcpy.tap() 注入 | MoyuAccessibilityService（无障碍服务） |
+| **分类器后端** | knn / template / cnn(ONNX) / hog_svm | 仅 cnn（TFLite） |
+| **OCR 气泡分割** | OpenCV HoughCircles | OpenCV HoughCircles（JNI） |
+| **CFOP 求解** | Cross + F2L + OLL + PLL + ALLL | Cross + F2L + OLL + PLL + ALLL |
+| **ALLL 概率控制** | `ALLL_PROB` 常量（默认 0.1） | recipe `alll_prob` 字段（默认 0.1） |
+| **ALLL 表缓存** | pickle（`.cfop_cache.pkl`） | ObjectOutputStream（`alll_rec_v2.cache`） |
+| **Recipe 延迟** | `cross/f2l/oll/pll/alll_delay` + `cross/f2l/oll/pll/alll_time` | `cross/f2l/oll_delay`（持续延迟，无 time 类型） |
+| **调试工具** | Telnet REPL（动态执行 Python 代码） | 悬浮窗（截图缩略图 + 日志 + 控制按钮） |
+| **训练数据采集** | `ocr.trainer collect`（自动保存截图） | 无 |
+| **Recipe 编辑** | 手动编辑 JSON | 内置 Compose UI 可视化编辑 |
+| **ESP 测试界面** | Telnet / 命令行 | 内置测试 Tab（读面片/求解/ALLL 重建） |
+| **部署形态** | 需 PC + Python 环境 | 自包含 APK，无 PC 依赖 |
+
+---
+
+## 状态机流程
+
+状态机按 `mode` 分别定义，通过 handler 表路由。各模式共用同一 `scramble` 实现。
+
+| mode | 流程 |
+|------|------|
+| **semi** | `scramble` ↔ `solve` |
+| **rank** | `init` → `scramble` → `solve` → `re_rank` → `scramble` |
+| **holder** | `init` → `scramble` → `solve` → `re_holder` → `init` |
+| **team** | `init` → `scramble` → `solve` → `re_team` → `scramble` |
+| **week** | `init` → `scramble` → `solve` → `re_week` → `init` |
+| **remote** | `scramble` → `solve`（循环等待下一把打乱） |
+
+---
+
+## Python 版
 
 ### 并发架构
-
-基于 `asyncio.create_task` + `asyncio.gather`，各功能模块以独立 Task 运行：
 
 ```
 controller.py → asyncio.run(main())
             └─ Controller.run()
                 ├─ create_task(_state_machine)    # 状态机驱动
                 ├─ create_task(ScreenLoop.run)     # 截图 + UI 检测
-                └─ create_task(CubeLoop.run)       # 魔方状态轮询 + 转动下发
-                └─ asyncio.gather(*tasks)          # 等待所有任务
+                ├─ create_task(CubeLoop.run)       # 魔方状态轮询 + 转动下发
+                └─ create_task(_start_telnet)      # Telnet REPL 服务器（可选）
 ```
 
-任务间通过 `asyncio.Queue` 通信，避免共享状态竞争。
-
-### 状态机流程
-
-状态机按 `mode` 分别定义，通过 `_get_handlers(mode)` 路由到对应的 handler 表。
-
-**semi 模式**（人类操作 UI，AI 只负责 OCR + solve）
-
-```
-scramble ──(识别完成)──▶ solve ──(下发完成)──▶ scramble
-```
-
-| state | description |
-|----------|-------------|
-| scramble | OCR 识别打乱序列气泡，下发转动；无气泡且已下发过则进入 solve |
-| solve | 获取面片 → CFOP 求解 → 下发转动，完成后回到 scramble |
-
-**rank 模式**（全自动排位赛）
-
-```
-init ──(点击begin_rank)──▶ scramble ──(气泡消失)──▶ solve
- ▲                                                      │
- │                   re_rank ◀──(检测到end_rank)────────┘
- └──────────────(点击re_rank)──────────────────────────┘
-```
-
-| state | description |
-|----------|-------------|
-| init | 等待并点击 begin_rank 按钮，进入排位 |
-| scramble | OCR 识别打乱气泡并下发；无气泡且已下发过则进入 solve |
-| solve | 求解并下发转动；同时检测 end_rank 或新一轮 scramble |
-| re_rank | 等待并点击 re_rank 按钮，回到 scramble |
-
-**新增 mode**：在 `controller.py` 末尾添加对应的 `async def _<mode>_<state>` handler 函数，并在 `_get_handlers()` 中注册 `{state: handler}` 字典。同时在 `_init_state()` 中为新 mode 设置默认初始状态。Controller 主体无需改动。
-
-流程控制全部在 Controller 代码中，Recipe 只负责 UI 特征描述。
-
-## 模块拆分
+### 模块结构
 
 ```
 moyu/
 ├── recipe/
 │   ├── schema.py              # Recipe JSON schema 定义与校验
 │   ├── loader.py              # 加载/热重载 recipe 文件
-│   └── recipes/
-│       └── example.json       # 设备配置示例
-│       └── templates/         # UI 特征模板图（配合 recipe 引用）
+│   └── recipes/               # 各设备 recipe JSON + 模板图
 ├── vision/
-│   ├── screen_loop.py         # FrameSource 抽象 + ScreenLoop（截图→检测→推送事件）
-│   ├── matcher.py             # 模板匹配核心（基于 recipe 配置）
-│   └── detector.py            # 各状态 UI 检测逻辑
+│   ├── screen_loop.py         # FrameSource 抽象 + ScreenLoop
+│   ├── matcher.py             # 模板匹配核心
+│   └── detector.py            # UI 检测逻辑
 ├── ocr/
-│   ├── segmentor.py           # 圆形轮廓检测 + 字符分割（固定流程）
-│   ├── classifier.py          # 字符分类器（KNN / 模板匹配 / CNN，可配置）
-│   ├── trainer.py             # 训练数据收集 & 模型训练/导出入口
-│   └── parser.py              # 识别结果 → 标准 move 序列
-│   ├── knn_model.pkl          # KNN 模型（训练后生成）
-│   ├── templates/             # 模板匹配分类器的模板图（训练后导出）
-│   └── cnn_model.onnx         # CNN ONNX 模型（训练后生成）
+│   ├── segmentor.py           # HoughCircles 气泡分割
+│   ├── classifier.py          # 字符分类器（KNN/模板/CNN/HOG-SVM）
+│   ├── trainer.py             # 训练数据采集与模型训练
+│   └── parser.py              # 识别结果 → move 序列
 ├── device/
-│   ├── scrcpy_client.py       # python-scrcpy-client 封装（截图/点击/滑动）
-│   ├── cube_api.py            # HTTP → ESP32 转动下发（对接 gan-cube-emu API）
-│   └─ cube_loop.py            # 轮询状态 + 消费转动指令循环
-└── controller.py              # 入口 + 主控制器（编排任务 + 状态机）
+│   ├── scrcpy_client.py       # scrcpy 封装
+│   ├── cube_api.py            # HTTP → ESP32
+│   ├── cube_loop.py           # 轮询 + 转动下发循环
+│   └── telnet.py              # Telnet REPL 服务器
+└── controller.py              # 入口 + 主控制器
 ```
 
-## Recipe 配置
-
-Recipe 是纯配置，只描述 UI 特征（模板图、检测区域、阈值），不含任何流程逻辑。
+### Recipe 配置
 
 ```json
 {
     "name": "pixel_7_pro",
     "device": { "width": 1080, "height": 2400 },
+    "mode": "rank",
+    "scramble_delay": 90,
+    "solve_delay": 90,
+    "cross_delay": 0,
+    "f2l_delay": 150,
+    "oll_delay": 90,
+    "pll_time": 200,
+    "alll_prob": 1.0,
+    "rotation": "x",
+    "move_format": "dir",
+    "classifier": {
+        "type": "cnn",
+        "model_path": "ocr/cnn_model.onnx"
+    },
     "ui": {
-        "match_button": {
-            "template": "templates/match_btn.png",
-            "roi": [400, 1800, 280, 80],
+        "begin_rank": {
+            "template": "templates/begin_rank.png",
+            "roi": { "x": 0, "y": 0, "w": 1080, "h": 200 },
             "threshold": 0.85
-        },
-        "scramble_area": {
-            "template": "templates/scramble_area.png",
-            "roi": [50, 400, 980, 300],
-            "threshold": 0.80
         }
     }
 }
 ```
 
-- `ui` 的 key 是特征名称（如 `"match_button"`），由 Controller 代码引用
-- Controller 决定在哪个状态检测哪些特征、检测到后做什么动作、转移到哪
-- `template` 为相对于 recipe 文件的模板图路径
-- `roi` 为检测区域 `[x, y, w, h]`，`null` 表示全图搜索
-- 换设备只需换 recipe（模板图 + 坐标），流程代码不变
+| 字段 | 说明 |
+|------|------|
+| `scramble_delay` / `solve_delay` | 进入对应阶段时设置 ESP32 转动延迟（ms） |
+| `cross/f2l/oll/pll/alll_delay` | 阶段前插入 `{"delay": ms}`（修改后续持续延迟） |
+| `cross/f2l/oll/pll/alll_time` | 阶段前插入 `{"time": ms}`（一次性等待） |
+| `alll_prob` | ALLL 尝试概率 0.0~1.0，默认 0.1 |
+| `rotation` | 面片坐标变换（x/x'/z/z'/z2） |
+| `move_format` | `"dir"` = face+dir 数字，`"str"` = 符号字符串 |
+| `classifier` | 分类器配置（type + model_path） |
 
-## ESP32 HTTP API (gan-cube-emu)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/` | Web 控制界面 |
-| POST | `/api/move` | 单步转动 `{"face":0-5,"dir":0-1}` |
-| POST | `/api/moves` | 批量转动 `[{"face":0,"dir":0},...]` |
-| GET | `/api/state` | 获取当前魔方状态 JSON |
-| GET | `/api/facelets` | 获取 kociemba 格式面片字符串 `UUUUUUUUURRRRRRRRRFFFFFFFFFDDDDDDDDDLLLLLLLLLBBBBBBBBB` |
-
-Face 映射 (GAN 协议)：`0=U, 1=R, 2=F, 3=D, 4=L, 5=B`
-
-Dir 映射：`0=CW(顺时针90°), 1=CCW(逆时针90°)`
-
-标准记号转换：
-
-| 记号 | face/dir |
-|------|----------|
-| `R`  | `{face:1, dir:0}` |
-| `R'` | `{face:1, dir:1}` |
-| `R2` | 两步 `{face:1, dir:0}` |
-
-## OCR 字符集
-
-分类器支持 24 个类别（6面 × 4修饰）：
-
-```
-R  R' R2 R2'    U  U' U2 U2'    F  F' F2 F2'
-D  D' D2 D2'    B  B' B2 B2'    L  L' L2 L2'
-```
-
-字符定位流程（固定，不依赖 recipe）：
-1. HoughCircles 检测圆形气泡轮廓
-2. 裁剪每个气泡区域，resize 到 64×64
-3. 送入分类器识别
-
-分类器后端可配置选择：
+### 分类器后端
 
 | 后端 | 配置 | 特点 |
 |------|------|------|
 | KNN | `{"type": "knn", "model_path": "ocr/knn_model.pkl"}` | 简单快速，小样本可用 |
-| 模板匹配 | `{"type": "template", "templates_dir": "ocr/templates/"}` | 无需训练，每类一张模板图 |
+| 模板匹配 | `{"type": "template", "templates_dir": "ocr/templates/"}` | 无需训练 |
 | CNN | `{"type": "cnn", "model_path": "ocr/cnn_model.onnx"}` | ONNX 推理，精度最高 |
+| HOG-SVM | `{"type": "hog_svm", "model_path": "ocr/hog_svm_model.pkl"}` | 传统特征，鲁棒性好 |
 
-## 各模块单独测试
-
-每个模块都有 `if __name__ == "__main__":` 入口，可独立运行调试：
-
-### Vision — 模板匹配
+### 启动
 
 ```bash
-# matcher: 在图片中查找特征图，可视化匹配结果
-python -m vision.matcher screen.png tmpl.png
-python -m vision.matcher screen.png tmpl.png 100 200 400 80   # 带 ROI
-
-# detector: 基于 recipe 检测某特征
-python -m vision.detector screen.png recipe/recipes/example.json match_button
-
-# screen_loop: 帧流测试（纯黑帧/图片/视频）
-python -m vision.screen_loop                     # 纯黑静态帧
-python -m vision.screen_loop screen.png          # 图片 mock
-python -m vision.screen_loop test_run.mp4        # 视频 mock
+python controller.py                              # 默认 example.json
+python controller.py --recipe rank.json           # 指定 recipe
+python controller.py --classifier cnn             # 指定分类器
+python controller.py --state scramble             # 指定初始状态
+python controller.py --telnet 5555                # 启动 Telnet REPL（默认开启）
+python controller.py --single-step                # 逐步下发（调试）
 ```
 
-### OCR — 字符识别
+### Telnet REPL
 
 ```bash
-# segmentor: 检测圆形气泡轮廓，可视化标注 + 逐个查看裁剪
-python -m ocr.segmentor scramble_screen.png
+telnet localhost 5555
+```
 
-# classifier: 对单张 64×64 字符图预测类别
-python -m ocr.classifier char.png --backend knn --model ocr/knn_model.pkl
-python -m ocr.classifier char.png --backend template --model ocr/templates/
+连接后可访问：`controller`, `recipe`, `cube`, `scrcpy`, `detector`, `logger`
+
+支持 Tab 补全、上下键历史、左右移动光标、Ctrl+W/Z/A 等快捷键。
+
+### 各模块单独测试
+
+```bash
+# 模板匹配
+python -m vision.matcher screen.png tmpl.png
+python -m vision.detector screen.png recipe/recipes/example.json begin_rank
+
+# OCR
+python -m ocr.segmentor scramble_screen.png
 python -m ocr.classifier char.png --backend cnn --model ocr/cnn_model.onnx
 
-# parser: 测试记号转换
-python -m ocr.parser R U "R'" "U'"
-python -m ocr.parser "RUR'U'"
-```
-
-### OCR — 训练
-
-```bash
-# 采集样本（从视频交互标注）
+# 训练
 python -m ocr.trainer collect --source video --input tests/scramble.mp4 --output data/
-
-# 采集样本（从图片目录）
-python -m ocr.trainer collect --source images --input tests/frames/ --output data/
-
-# 训练 KNN
-python -m ocr.trainer train --backend knn --data data/ --output ocr/knn_model.pkl
-
-# 导出模板图（用于模板匹配分类器）
-python -m ocr.trainer train --backend template --data data/ --output ocr/templates/
-
-# 训练 CNN → ONNX
 python -m ocr.trainer train --backend cnn --data data/ --output ocr/cnn_model.onnx
+
+# 设备
+python -m device.cube_api 192.168.4.1
 ```
 
-### Device — 设备控制
+---
 
-```bash
-# cube_api: 测试 ESP32 HTTP 接口
-python -m device.cube_api              # Mock 测试（无需真实 ESP32）
-python -m device.cube_api 192.168.4.1  # 真实设备
+## Android Kotlin 版
 
-# cube_loop: 测试轮询 + 转动下发循环（需先写代码实例化）
-#   api = MockCubeAPI()
-#   await api.open()
-#   asyncio.run(CubeLoop(api, asyncio.Queue(), asyncio.Queue()).run())
+### 架构
+
+```
+ControllerService（前台服务）
+├─ ScreenCaptureService        # MediaProjection 截屏
+├─ MoyuAccessibilityService    # 无障碍服务（手势注入）
+├─ FloatLogService             # 悬浮窗（日志 + 控制 + 截图缩略图）
+└─ Controller（协程）
+    ├─ stateMachine()          # 状态机
+    ├─ CubeApi（OkHttp）        # ESP32 HTTP 通信
+    ├─ Detector（OpenCV）       # UI 模板匹配
+    └─ MoveClassifier（TFLite）# CNN 字符识别
 ```
 
-### Recipe — 配置加载
+### 模块结构
 
-```bash
-# 直接在 Python 中测试
-python -c "from recipe.loader import RecipeLoader; r = RecipeLoader(); print(r.recipe.name); print(r.recipe.feature('match_button'))"
 ```
+android/app/src/main/java/com/moyu/
+├── controller/
+│   ├── Controller.kt          # 主控制器 + 状态机
+│   ├── HandlerRouter.kt       # 模式 → handler 表路由
+│   ├── RankHandlers.kt        # rank/team/week/holder/semi/remote 各状态 handler
+│   └── RankSolveHandlers.kt   # 求解阶段公共逻辑
+├── device/
+│   ├── CubeApi.kt             # HTTP → ESP32（OkHttp）
+│   └── MockCubeApi.kt         # 离线测试 Mock
+├── ocr/
+│   ├── BubbleSegmentor.kt     # OpenCV HoughCircles 气泡分割
+│   ├── MoveClassifier.kt      # TFLite CNN 分类器
+│   └── MoveParser.kt          # 识别结果 → move 序列
+├── recipe/
+│   ├── RecipeConfig.kt        # Recipe 数据类定义
+│   └── RecipeLoader.kt        # 加载 assets/recipes/
+├── service/
+│   ├── ScreenCaptureService.kt # MediaProjection 截屏服务
+│   ├── FloatLogService.kt      # 悬浮窗服务
+│   └── MoyuAccessibilityService.kt # 无障碍手势服务
+├── solve/
+│   ├── CfopSolver.kt          # CFOP 求解器主入口
+│   ├── CrossSolver.kt         # 底十字 BFS
+│   ├── F2lSolver.kt           # F2L 搜索
+│   ├── LLSolver.kt            # OLL / PLL / ALLL 识别与求解
+│   ├── ExAllls.kt             # 6000+ ALLL 算法集合
+│   ├── CubieCube.kt           # 魔方置换群表示
+│   ├── AlgParser.kt           # 算法符号解析与转换
+│   └── CfopTables.kt          # 剪枝表与坐标函数
+├── ui/
+│   ├── MainActivity.kt        # 主界面（Compose）
+│   ├── RecipeEditorScreen.kt  # Recipe 可视化编辑
+│   └── EspTestScreen.kt       # ESP32 测试界面
+└── vision/
+    └── Detector.kt            # OpenCV 模板匹配（TM_CCOEFF_NORMED）
+```
+
+### Recipe 配置
+
+```json
+{
+    "name": "xiaomi_13_rank",
+    "device": { "width": 1080, "height": 2400 },
+    "mode": "rank",
+    "scramble_delay": 90,
+    "solve_delay": 90,
+    "cross_delay": 0,
+    "f2l_delay": 0,
+    "oll_delay": 0,
+    "alll_prob": 1.0,
+    "rotation": "x",
+    "move_format": "dir",
+    "initial_state": null,
+    "ui": {
+        "begin_rank": {
+            "template": "templates/begin_rank.png",
+            "roi": { "x": 0, "y": 0, "w": 1080, "h": 200 },
+            "threshold": 0.85,
+            "desc": "排位赛开始按钮"
+        }
+    }
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `scramble_delay` / `solve_delay` | 进入对应阶段时设置 ESP32 转动延迟（ms） |
+| `cross/f2l/oll_delay` | 阶段前插入 `{"delay": ms}`（修改后续持续延迟） |
+| `alll_prob` | ALLL 尝试概率 0.0~1.0，默认 0.1 |
+| `rotation` | 面片坐标变换（x/x'/z/z'/z2） |
+| `move_format` | `"dir"` = face+dir 数字，`"str"` = 符号字符串 |
+| `initial_state` | 覆盖默认初始状态 |
+
+### 悬浮窗功能
+
+- **暂停/继续**：挂起状态机（协程仍运行）
+- **停止**：终止状态机
+- **重启**：切换目标状态（init/scramble/solve）后重启
+- **状态显示**：实时显示 `▶ scramble` 或 `⏸ solve`（每 500ms 刷新）
+- **截图缩略图**：实时预览当前屏幕（每 500ms 更新）
+- **日志区**：最新一条（青色）+ 可展开滚动日志（保留 200 行）
+- **拖动/折叠**：拖动控制栏移动窗口，轻点切换展开/折叠
+
+---
+
+## ESP32 HTTP API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/facelets` | 读取 54 个面片字符串（kociemba 格式） |
+| POST | `/api/moves` | 下发转动序列（JSON Array） |
+| POST | `/api/moves/clear` | 清空待执行队列 |
+| POST | `/api/delay` | 设置电机延迟（ms） |
+| GET | `/api/state` | 读取魔方全部状态信息 |
+
+### 指令格式
+
+| 类型 | JSON | 说明 |
+|------|------|------|
+| 转动（dir 模式） | `{"face": 1, "dir": 0}` | face 0~5 = U/R/F/D/L/B，dir 0/1/2 = CW/CCW/180° |
+| 转动（str 模式） | `{"move": "R'"}` | 直接传符号字符串 |
+| 持续延迟 | `{"delay": 100}` | 修改后续所有转动间隔 |
+| 一次性延迟 | `{"time": 100}` | 仅等待一次，不影响后续延迟（Python 版支持） |
+
+---
+
+## CFOP 求解器
+
+两个版本的求解器逻辑完全一致：
+
+```
+输入: facelet 字符串（54 字符）
+  ↓
+Cross（底十字，BFS + 剪枝表）
+  ↓
+F2L（四对，IDA* + 宏对优化）
+  ↓
+ALLL（概率性一步 LL，查 ~97k 条目哈希表）
+  ↓（未命中则走 OLL + PLL）
+OLL（57 种算法）→ PLL（21 种算法）
+  ↓
+输出: SolveResult { cross, f2l, oll?, pll?, alll?, solution }
+```
+
+ALLL 表由 OLL(57) + PLL(21) + EX_ALLLS(~6000) 算法 × 4 AUF × 4 post-AUF 展开构建，首次构建后序列化缓存，后续启动直接加载。
+
+---
+
+## OCR 字符集
+
+分类器支持 25 个类别：
+
+```
+R  R' R2 R2'    U  U' U2 U2'    F  F' F2 F2'
+D  D' D2 D2'    B  B' B2 B2'    L  L' L2 L2'
+EMPTY
+```
+
+气泡定位流程：
+1. OpenCV HoughCircles 检测圆形气泡轮廓
+2. 裁剪每个气泡区域，resize 到 64×64
+3. 送入分类器识别，过滤 EMPTY，拼接为 move 序列
+
+---
 
 ## 依赖
 
-- [gan-cube-emu](../gan-cube-emu) — ESP32-C3 BLE 魔方模拟器固件
-- [py-scrcpy-client](https://github.com/leng-yue/py-scrcpy-client) — 安卓手机 scrcpy 控制
-- [aiohttp](https://pypi.org/project/aiohttp/) — 异步 HTTP 客户端（ESP32 通信）
-- [opencv-python](https://pypi.org/project/opencv-python/) — 图像处理 / 模板匹配 / 轮廓检测
-- [numpy](https://pypi.org/project/numpy/) — 数值计算
-- [adbutils](https://github.com/openatx/adbutils) — ADB 连接管理（scrcpy 依赖）
+### Python 版
 
-可选依赖（按分类器后端）：
-- [onnxruntime](https://pypi.org/project/onnxruntime/) — CNN 推理（如使用 CNN 后端）
-- [torch](https://pytorch.org/) — CNN 训练导出 ONNX
+- [py-scrcpy-client](https://github.com/leng-yue/py-scrcpy-client)
+- [aiohttp](https://pypi.org/project/aiohttp/)
+- [opencv-python](https://pypi.org/project/opencv-python/)
+- [numpy](https://pypi.org/project/numpy/)
+- [onnxruntime](https://pypi.org/project/onnxruntime/)（CNN 推理）
+- [torch](https://pytorch.org/)（CNN 训练，可选）
 
-## 启动
+### Android 版
 
-```bash
-python controller.py                        # 按 recipe mode 运行
-python controller.py --state scramble       # 指定初始状态（跳过默认起点）
-python controller.py --classifier cnn --single-step
-```
-
-状态机默认初始状态由 mode 决定（semi → scramble，rank → init），需确保 ESP32 已启动且手机已通过 ADB 连接。
+- OpenCV 4.4.0（AAR，JNI）
+- TensorFlow Lite（CNN 推理）
+- OkHttp（ESP32 HTTP 通信）
+- Jetpack Compose（UI）
