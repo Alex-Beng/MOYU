@@ -57,6 +57,7 @@ fun RecipeEditorScreen(onSnackbar: (String) -> Unit = {}) {
     var crossDelay by remember { mutableStateOf("") }
     var f2lDelay by remember { mutableStateOf("") }
     var ollDelay by remember { mutableStateOf("") }
+    var alllProb by remember { mutableStateOf("0.1") }
     var rotation by remember { mutableStateOf("") }
     var moveFormat by remember { mutableStateOf("dir") }
     var features = remember { mutableStateListOf<EditableFeature>() }
@@ -77,6 +78,7 @@ fun RecipeEditorScreen(onSnackbar: (String) -> Unit = {}) {
                     crossDelay = root.optInt("cross_delay", -1).let { if (it < 0) "" else it.toString() }
                     f2lDelay = root.optInt("f2l_delay", -1).let { if (it < 0) "" else it.toString() }
                     ollDelay = root.optInt("oll_delay", -1).let { if (it < 0) "" else it.toString() }
+                    alllProb = root.optDouble("alll_prob", 0.1).toString()
                     rotation = root.optString("rotation", "")
                     moveFormat = root.optString("move_format", "dir")
                     features.clear()
@@ -129,6 +131,7 @@ fun RecipeEditorScreen(onSnackbar: (String) -> Unit = {}) {
                 putDelay("oll_delay", ollDelay)
                 if (rotation.isNotBlank()) root.put("rotation", rotation)
                 root.put("move_format", moveFormat)
+                alllProb.toDoubleOrNull()?.let { root.put("alll_prob", it) }
 
                 val ui = JSONObject()
                 for (f in features) {
@@ -291,6 +294,13 @@ fun RecipeEditorScreen(onSnackbar: (String) -> Unit = {}) {
             Spacer(Modifier.width(8.dp))
             OutlinedTextField(value = ollDelay, onValueChange = { ollDelay = it }, label = { Text("OLL") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
         }
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = alllProb, onValueChange = { alllProb = it },
+            label = { Text("ALLL Prob (0~1)") }, singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            modifier = Modifier.fillMaxWidth()
+        )
         Spacer(Modifier.height(16.dp))
 
         // Section D: UI Features

@@ -1,6 +1,9 @@
 package com.moyu.solve
 
 import android.util.Log
+import java.io.File
+import java.io.ObjectInputStream
+import java.io.ObjectOutputStream
 
 class CfopSolver {
     companion object {
@@ -58,6 +61,8 @@ class CfopSolver {
         var logFn: ((String) -> Unit)? = null
     }
 
+    var alllProb: Float = 0.1f
+
     data class SolveResult(
         val cross: String,
         val f2l: String,
@@ -77,7 +82,8 @@ class CfopSolver {
     private var macroPairPrun: Array<ByteArray>? = null
     private var ollRec: Map<FourFourKey, Pair<String,String>>? = null
     private var pllRec: Map<FourFourKey, Pair<String,String>>? = null
-    private var alllRec: Map<String, Pair<String,String>>? = null
+    private var alllRec: Map<AlllKey, Pair<String, String>>? = null
+    var cacheDir: File? = null
 
     private var initialized = false
 
@@ -101,13 +107,50 @@ class CfopSolver {
 
         ollRec = LLSolver.buildOllRecognition()
         pllRec = LLSolver.buildPllRecognition()
-        dbg("init: OLL/PLL recognition done (oll=${ollRec!!.size}, pll=${pllRec!!.size})")
+        val cached = loadAlllCache()
+        alllRec = if (cached != null && cached.size > 1000) {
+            dbg("init: ALLL loaded from cache (${cached.size} entries)")
+            cached
+        } else {
+            dbg("init: building ALLL table...")
+            LLSolver.buildAlllRecognition().also { saveAlllCache(it) }
+        }
+        dbg("init: OLL/PLL/ALLL recognition done (oll=${ollRec!!.size}, pll=${pllRec!!.size}, alll=${alllRec!!.size})")
 
         initialized = true
     }
 
+    private fun alllCacheFile(): File? = cacheDir?.resolve("alll_rec_v2.cache")
+
+    @Suppress("UNCHECKED_CAST")
+    private fun loadAlllCache(): Map<AlllKey, Pair<String, String>>? {
+        val f = alllCacheFile() ?: return null
+        if (!f.exists()) return null
+        return try {
+            ObjectInputStream(f.inputStream().buffered()).use { it.readObject() as Map<AlllKey, Pair<String, String>> }
+        } catch (_: Exception) {
+            f.delete()
+            null
+        }
+    }
+
+    fun alllRecSize(): Int = alllRec?.size ?: -1
+
+    private fun saveAlllCache(table: Map<AlllKey, Pair<String, String>>) {
+        val f = alllCacheFile() ?: return
+        try {
+            ObjectOutputStream(f.outputStream().buffered()).use { it.writeObject(table) }
+        } catch (_: Exception) {}
+    }
+
+    fun rebuildAlllCache() {        alllCacheFile()?.delete()
+        alllRec = LLSolver.buildAlllRecognition().also { saveAlllCache(it) }
+        dbg("ALLL table rebuilt: ${alllRec!!.size} entries")
+    }
+
     fun solve(faceletStr: String, rotation: String? = null): SolveResult? {
         if (!initialized) init()
+        dbg("solve: alllProb=$alllProb alllSize=${alllRec?.size}")
 
         var fc = faceletStr
         if (!rotation.isNullOrBlank()) {
@@ -141,27 +184,51 @@ class CfopSolver {
         dbg("f2l = $f2lStr  (${f2lMoves.size}m, ${t2-t1}ms)")
         state = f2lState
 
-        val ollResult = LLSolver.solveOll(state, ollRec!!)
-        val (ollAlg, ollState) = ollResult
-        if (ollAlg == null) {
-            dbg("oll FAILED  co=${state.co.contentToString()} eo=${state.eo.contentToString()}")
-            return null
-        }
-        val ollStr = ollAlg
-        dbg("oll = $ollStr")
-        state = ollState
+        var ollStr = ""
+        var pllStr = ""
+        var alllStr: String? = null
+        var alllFound = false
 
-        val pllResult = LLSolver.solvePll(state, pllRec!!)
-        val (pllAlg, _) = pllResult
-        if (pllAlg == null) {
-            dbg("pll FAILED  cp=${state.cp.contentToString()} ep=${state.ep.contentToString()}")
-            return null
+        val alllResult = if (alllProb > 0f && (alllProb >= 1.0f || Math.random() < alllProb)) {
+            dbg("alll: trying (prob=$alllProb, tableSize=${alllRec!!.size})")
+            LLSolver.solveAlll(state, alllRec!!)
+        } else {
+            Pair(null, state)
         }
-        val pllStr = pllAlg
-        dbg("pll = $pllStr")
+        if (alllResult.first != null) {
+            alllStr = alllResult.first
+            state = alllResult.second
+            alllFound = true
+            dbg("alll = $alllStr")
+        } else {
+            dbg("alll not found, falling back to OLL+PLL")
+            val ollResult = LLSolver.solveOll(state, ollRec!!)
+            val (ollAlg, ollState) = ollResult
+            if (ollAlg == null) {
+                dbg("oll FAILED  co=${state.co.contentToString()} eo=${state.eo.contentToString()}")
+                return null
+            }
+            ollStr = ollAlg
+            dbg("oll = $ollStr")
+            state = ollState
+
+            val pllResult = LLSolver.solvePll(state, pllRec!!)
+            val (pllAlg, _) = pllResult
+            if (pllAlg == null) {
+                dbg("pll FAILED  cp=${state.cp.contentToString()} ep=${state.ep.contentToString()}")
+                return null
+            }
+            pllStr = pllAlg
+            dbg("pll = $pllStr")
+        }
+
         val t3 = System.currentTimeMillis()
 
-        val parts = listOfNotNull(crossStr, f2lStr, ollStr, pllStr).filter { it.isNotEmpty() }
+        val parts = if (alllFound) {
+            listOfNotNull(crossStr, f2lStr, alllStr).filter { it.isNotEmpty() }
+        } else {
+            listOfNotNull(crossStr, f2lStr, ollStr, pllStr).filter { it.isNotEmpty() }
+        }
         val sol = parts.joinToString(" ")
 
         val finalCross: String
@@ -176,12 +243,21 @@ class CfopSolver {
             val wrap = { s: String -> if (s.isNotEmpty()) "$prefix $s" else prefix }
             val (c, _) = AlgParser.convertAlgToBasic(wrap(crossStr))
             val (f, _) = AlgParser.convertAlgToBasic(wrap(f2lStr))
-            val (o, _) = if (ollStr.isNotEmpty()) AlgParser.convertAlgToBasic(wrap(ollStr)) else Pair("", "")
-            val (p, _) = if (pllStr.isNotEmpty()) AlgParser.convertAlgToBasic(wrap(pllStr)) else Pair("", "")
             val (sln, _) = AlgParser.convertAlgToBasic(wrap(sol))
-            finalCross = c; finalF2l = f; finalOll = o; finalPll = p; finalAlll = null; fullSolution = sln
+            if (alllFound) {
+                val (a, _) = if (!alllStr.isNullOrEmpty()) AlgParser.convertAlgToBasic(wrap(alllStr)) else Pair("", "")
+                finalCross = c; finalF2l = f; finalOll = null; finalPll = null; finalAlll = a; fullSolution = sln
+            } else {
+                val (o, _) = if (ollStr.isNotEmpty()) AlgParser.convertAlgToBasic(wrap(ollStr)) else Pair("", "")
+                val (p, _) = if (pllStr.isNotEmpty()) AlgParser.convertAlgToBasic(wrap(pllStr)) else Pair("", "")
+                finalCross = c; finalF2l = f; finalOll = o; finalPll = p; finalAlll = null; fullSolution = sln
+            }
         } else {
-            finalCross = crossStr; finalF2l = f2lStr; finalOll = ollStr; finalPll = pllStr; finalAlll = null; fullSolution = sol
+            if (alllFound) {
+                finalCross = crossStr; finalF2l = f2lStr; finalOll = null; finalPll = null; finalAlll = alllStr; fullSolution = sol
+            } else {
+                finalCross = crossStr; finalF2l = f2lStr; finalOll = ollStr; finalPll = pllStr; finalAlll = null; fullSolution = sol
+            }
         }
 
         dbg("solution = $fullSolution  (total ${t3-t0}ms)")

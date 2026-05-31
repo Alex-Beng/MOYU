@@ -31,6 +31,8 @@ import androidx.compose.ui.unit.dp
 import com.moyu.common.AppPrefs
 import com.moyu.device.CubeApi
 import com.moyu.solve.CfopSolver
+import com.moyu.solve.applyAlgStr
+import com.moyu.solve.invertAlg
 import kotlinx.coroutines.launch
 
 @Composable
@@ -79,6 +81,7 @@ fun EspTestScreen() {
                             val solver = CfopSolver()
                             CfopSolver.DEBUG = true
                             CfopSolver.logFn = { msg -> appendLog(msg) }
+                            solver.cacheDir = context.filesDir
                             solver.init()
                             appendLog("CFOP 求解中...")
                             val result = solver.solve(facelets, null)
@@ -128,6 +131,62 @@ fun EspTestScreen() {
                 modifier = Modifier.weight(1f)
             ) { Text("仅读面片") }
         }
+
+        Spacer(Modifier.height(8.dp))
+
+        Button(
+            onClick = {
+                scope.launch {
+                    loading = true
+                    log = ""
+                    try {
+                        appendLog("重建 ALLL 表...")
+                        val solver = CfopSolver()
+                        solver.cacheDir = context.filesDir
+                        solver.init()
+                        solver.rebuildAlllCache()
+                        appendLog("✅ ALLL 表重建完成")
+                    } catch (e: Exception) {
+                        appendLog("❌ 错误: ${e.message}")
+                    }
+                    loading = false
+                }
+            },
+            enabled = !loading,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("重建 ALLL 缓存") }
+
+        Spacer(Modifier.height(8.dp))
+
+        Button(
+            onClick = {
+                scope.launch {
+                    loading = true
+                    log = ""
+                    try {
+                        appendLog("测试 ALLL 识别...")
+                        val solver = CfopSolver()
+                        CfopSolver.DEBUG = true
+                        CfopSolver.logFn = { msg -> appendLog(msg) }
+                        solver.cacheDir = context.filesDir
+                        solver.init()
+                        appendLog("ALLL table size: ${solver.alllRecSize()}")
+                        val solved = com.moyu.solve.CubieCube.solved()
+                        val oll33inv = com.moyu.solve.invertAlg("R U R' U' R' F R F'")
+                        val oll33state = com.moyu.solve.applyAlgStr(solved, oll33inv)
+                        val oll33facelet = com.moyu.solve.CubieCube.toFacelet(oll33state)
+                        appendLog("OLL33 facelet: $oll33facelet")
+                        val r2 = solver.solve(oll33facelet, null)
+                        appendLog("OLL33 result: alll=${r2?.alll} oll=${r2?.oll} pll=${r2?.pll} sol=${r2?.solution}")
+                    } catch (e: Exception) {
+                        appendLog("❌ 错误: ${e.message}\n${e.stackTraceToString()}")
+                    }
+                    loading = false
+                }
+            },
+            enabled = !loading,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("测试 ALLL 识别") }
 
         Spacer(Modifier.height(8.dp))
 

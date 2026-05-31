@@ -23,6 +23,9 @@
 
     # 训练 CNN → ONNX
     python -m ocr.trainer train --backend cnn --data data/ --output ocr/cnn_model.onnx --epochs 1 --batch-size 256
+
+    # CNN data fix
+    python -m ocr.trainer train --backend cnn --data datafix/ --output ocr/cnn_model_fix.onnx --epochs 1 --batch-size 256
 """
 import argparse
 import logging

@@ -181,7 +181,7 @@ class CubieCube(
             for (i in 0..11) {
                 val j = cube.ep[i]
                 val ori = cube.eo[i]
-                for (k in 0..2)
+                for (k in 0..1)
                     f[EDGE_FACELET[i][(k + ori) % 2]] = COLOR_CHARS[EDGE_COLOR[j][k]]
             }
             return String(f)

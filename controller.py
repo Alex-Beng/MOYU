@@ -16,7 +16,7 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-
+from device.telnet import AsyncTelnetServer
 from recipe.loader import RecipeLoader
 from vision.screen_loop import ScreenLoop, ScrcpySource
 from vision.detector import Detector
@@ -38,13 +38,14 @@ DEBUG = False
 class Controller:
     """主控制器 —— 编排各独立任务"""
 
-    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None, recipe_path: str | None = None):
+    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None, recipe_path: str | None = None, telnet_port: int | None = None):
         self.recipe = RecipeLoader(recipe_path) if recipe_path else RecipeLoader()
         self.scrcpy = ScrcpyClient(max_width=0, max_fps=10, bitrate=200_000_000)
+        self._telnet_port = telnet_port
         self.cube = CubeAPI(single_step=single_step)
         self.detector = Detector(self.recipe.recipe)
 
-        self.classifier_config = classifier_config or {"type": "knn"}
+        self.classifier_config =  classifier_config or {"type": "knn"}
         self.classifier = None
 
         self.ui_event_queue: asyncio.Queue = asyncio.Queue()
@@ -97,6 +98,12 @@ class Controller:
             asyncio.create_task(self.screen_loop.run(), name="screen_loop"),
             asyncio.create_task(self.cube_loop.run(), name="cube_loop"),
         ]
+
+        if self._telnet_port:
+            telnet_task = asyncio.create_task(self._start_telnet(), name="telnet_server")
+            tasks.append(telnet_task)
+            logger.info(f"Telnet REPL 启动在端口 {self._telnet_port}")
+
         logger.info("所有任务已启动")
         self._running = True
         try:
@@ -131,6 +138,22 @@ class Controller:
     # 工具方法
     # ------------------------------------------------------------------
 
+    async def _start_telnet(self):
+        namespace = {
+            'controller': self,
+            'recipe': self.recipe.recipe,
+            'cube': self.cube,
+            'scrcpy': self.scrcpy,
+            'detector': self.detector,
+            'logger': logger,
+        }
+        srv = AsyncTelnetServer('0.0.0.0', self._telnet_port, namespace)
+        await srv.start()
+
+    # ------------------------------------------------------------------
+    # 工具方法
+    # ------------------------------------------------------------------
+
     async def _apply_delay(self):
         """根据当前状态设置 ESP32 转动延迟。"""
         recipe = self.recipe.recipe
@@ -152,23 +175,39 @@ class Controller:
             return parse_move_notation(move_str)
 
         if result.get("cross"):
+            if recipe.cross_time:
+                steps.append({"time": recipe.cross_time})
             if recipe.cross_delay:
                 steps.append({"delay": recipe.cross_delay})
             steps.extend(_parse(result["cross"]))
 
         if result.get("f2l"):
+            if recipe.f2l_time:
+                steps.append({"time": recipe.f2l_time})
             if recipe.f2l_delay:
                 steps.append({"delay": recipe.f2l_delay})
             steps.extend(_parse(result["f2l"]))
 
         if result.get("alll"):
+            if recipe.alll_time:
+                print("alll_time", recipe.alll_time)
+                steps.append({"time": recipe.alll_time})
+            if recipe.alll_delay:
+                steps.append({"delay": recipe.alll_delay})
             steps.extend(_parse(result["alll"]))
         else:
             if result.get("oll"):
+                if recipe.oll_time:
+                    print("oll_time", recipe.oll_time)
+                    steps.append({"time": recipe.oll_time})
                 if recipe.oll_delay:
                     steps.append({"delay": recipe.oll_delay})
                 steps.extend(_parse(result["oll"]))
             if result.get("pll"):
+                if recipe.pll_time:
+                    steps.append({"time": recipe.pll_time})
+                if recipe.pll_delay:
+                    steps.append({"delay": recipe.pll_delay})
                 steps.extend(_parse(result["pll"]))
 
         return steps
@@ -336,6 +375,9 @@ async def _rank_scramble(self: Controller) -> str:
             # 保存每步所有字符区域到 debug/，便于后续重新打标训练
             ts = int(time.time())
             for idx, (char_img, (cx, cy, r)) in enumerate(chars):
+                label = labels[idx]
+                if label == "EMPTY":
+                    continue
                 debug_dir = Path("debug") / "scramble"
                 debug_dir.mkdir(parents=True, exist_ok=True)
                 cv2.imwrite(str(debug_dir / f"{ts}_{idx}.png"), char_img)
@@ -603,17 +645,21 @@ async def _team_solve(self: Controller) -> str:
     return "solve"
 
 async def _team_re_team(self: Controller) -> str:
-    """检测并点击 re_team 返回战队赛开始界面。"""
-    logger.info("team/init: 等待 re_team...")
+    """持续点击 re_team 直到模板匹配失败，再返回 init。"""
+    logger.info("team/re_team: 持续点击 re_team 直到消失...")
     self._scramble_seen_move = False
     self._no_scramble_cnt = 0
-    ok, _, _ = await self._wait_for_ui("re_team", timeout=60.0)
-    await asyncio.sleep(2.0)
-    if ok:
+    while True:
+        frame = self.scrcpy.last_frame
+        if frame is None:
+            await asyncio.sleep(0.2)
+            continue
+        matched, center = self.detector.detect(frame, "re_team")
+        if not matched:
+            logger.info("team/re_team: re_team 消失，跳转 init")
+            return "init"
         await self._click_feature("re_team")
-        await asyncio.sleep(2.0)
-        return "init"
-    return "re_team"
+        await asyncio.sleep(0.5)
 #endregion
 
 #region week
@@ -843,12 +889,19 @@ if __name__ == "__main__":
     parser.add_argument("--mock", action="store_true", help="Mock 测试")
     parser.add_argument("--single-step", action="store_true", help="逐步下发转动 (debug)")
     parser.add_argument("--state", default=None, help="指定初始状态 (覆盖 mode 默认值，如 scramble/solve/re_rank)")
+    parser.add_argument("--telnet", type=int, default=5555, metavar="PORT", help="启动 telnet REPL 服务器 (默认 5555，设为 0 禁用)")
     args = parser.parse_args()
 
     classifier_config = {"type": args.classifier}
 
     async def main():
-        controller = Controller(classifier_config=classifier_config, single_step=args.single_step, initial_state=args.state, recipe_path=args.recipe)
+        controller = Controller(
+            classifier_config=classifier_config,
+            single_step=args.single_step,
+            initial_state=args.state,
+            recipe_path=args.recipe,
+            telnet_port=args.telnet
+        )
         if args.mock:
             from device.cube_api import MockCubeAPI
             controller.cube = MockCubeAPI()

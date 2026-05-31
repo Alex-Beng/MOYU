@@ -10,6 +10,7 @@
     "cross_delay": 80,
     "f2l_delay": 100,
     "oll_delay": 80,
+    "rotation": "z",
     "ui": {
         "begin_holder": {
             "template": "../../templates/begin_holder.png",

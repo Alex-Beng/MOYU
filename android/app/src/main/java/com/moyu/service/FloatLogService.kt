@@ -41,6 +41,7 @@ class FloatLogService : Service() {
     private lateinit var btnPause: TextView
     private lateinit var btnStop: TextView
     private lateinit var btnRestart: TextView
+    private lateinit var lblCurrentState: TextView
     private lateinit var lblRestartState: TextView
     private lateinit var frameThumb: ImageView
     private lateinit var lastLogView: TextView
@@ -194,6 +195,15 @@ class FloatLogService : Service() {
         }
         overlayView.addView(lastLogView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
+        // ── Current state ──
+        lblCurrentState = TextView(this).apply {
+            setTextColor(Color.YELLOW)
+            textSize = 10f
+            setPadding(8, 2, 8, 2)
+            text = "state: -"
+        }
+        overlayView.addView(lblCurrentState, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
         // ── Frame thumbnail ──
         frameThumb = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -259,7 +269,7 @@ class FloatLogService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.START
+            gravity = Gravity.TOP or Gravity.END
             x = 0; y = 0
         }
         wm.addView(overlayView, params)
@@ -276,6 +286,10 @@ class FloatLogService : Service() {
                     val targetH = targetW * bmp.height / bmp.width
                     val thumb = android.graphics.Bitmap.createScaledBitmap(bmp, targetW, targetH, false)
                     frameThumb.setImageBitmap(thumb)
+                }
+                controller?.let { c ->
+                    val stateStr = if (c.isPaused()) "⏸ ${c.state}" else "▶ ${c.state}"
+                    lblCurrentState.text = "state: $stateStr"
                 }
                 thumbHandler.postDelayed(this, 500)
             }

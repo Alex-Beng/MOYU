@@ -8,10 +8,10 @@ from solve.ALLL import EX_ALLLS
 DEBUG = False
 DEBUG = True
 
-ALLL_PROB = 0.1
+ALLL_PROB = 0.4
 
 XCROSS_ENABLED = True
-XCROSS_MAX_CROSS = 4
+XCROSS_MAX_CROSS = 3
 
 def _dbg(*args, **kwargs):
     if DEBUG:

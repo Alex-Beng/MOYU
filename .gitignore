@@ -17,3 +17,5 @@ __pycache__
 *.jpg
 *.tflite
 /floatlog.txt
+error.log
+*.log

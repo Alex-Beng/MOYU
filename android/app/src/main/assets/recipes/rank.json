@@ -10,6 +10,7 @@
     "cross_delay": 0,
     "f2l_delay": 0,
     "oll_delay": 0,
+    "alll_prob": 1.0,
     "ui": {
         "scramble_area": {
             "template": "",

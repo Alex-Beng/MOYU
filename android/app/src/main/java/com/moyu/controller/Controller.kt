@@ -66,6 +66,8 @@ class Controller(private val context: Context, recipePath: String = "rank.json")
         CfopSolver.DEBUG = true
         CfopSolver.logFn = { msg -> log(msg) }
         detector.logFn = { msg -> log(msg) }
+        cfopSolver.alllProb = recipe.alllProb
+        cfopSolver.cacheDir = context.filesDir
         cfopSolver.init()
         log("CFOP 求解器初始化完成")
 

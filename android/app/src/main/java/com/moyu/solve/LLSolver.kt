@@ -88,6 +88,64 @@ object LLSolver {
         "Z" to "M' U M2 U M2 U M' U2 M2"
     )
 
+    fun buildAlllRecognition(): Map<AlllKey, Pair<String, String>> {
+        val table = mutableMapOf<AlllKey, Pair<String, String>>()
+        val solved = CubieCube.solved()
+        val aufStrs = mapOf(0 to "", 1 to "U", 2 to "U2", 3 to "U'")
+        val allAlgs = mutableMapOf<String, String>()
+        for ((k, v) in OLL_ALGS) allAlgs["OLL_$k"] = v
+        for ((k, v) in PLL_ALGS) allAlgs["PLL_$k"] = v
+        allAlgs.putAll(EX_ALLLS)
+        for ((name, alg) in allAlgs) {
+            val basic = AlgParser.convertAlgToBasic(alg).first
+            for (pre in 0..3) for (post in 0..3) {
+                val preStr = aufStrs[pre]!!
+                val postStr = aufStrs[post]!!
+                val fullAlg = listOfNotNull(preStr, basic, postStr).filter { it.isNotEmpty() }.joinToString(" ")
+                val invFull = invertAlg(fullAlg)
+                val s = applyAlgStr(solved.copy(), invFull)
+                val key = AlllKey(
+                    FourInts(s.cp[0], s.cp[1], s.cp[2], s.cp[3]),
+                    FourInts(s.co[0], s.co[1], s.co[2], s.co[3]),
+                    FourInts(s.ep[0], s.ep[1], s.ep[2], s.ep[3]),
+                    FourInts(s.eo[0], s.eo[1], s.eo[2], s.eo[3])
+                )
+                if (key !in table || fullAlg.length < table[key]!!.second.length) {
+                    table[key] = Pair(name, fullAlg)
+                }
+            }
+        }
+        table[AlllKey(
+            FourInts(0, 1, 2, 3), FourInts(0, 0, 0, 0),
+            FourInts(0, 1, 2, 3), FourInts(0, 0, 0, 0)
+        )] = Pair("skip", "")
+        return table
+    }
+
+    fun solveAlll(state: CubieCube, alllRec: Map<AlllKey, Pair<String, String>>): Pair<String?, CubieCube> {
+        for (auf in 0..3) {
+            val test = state.applyURot(auf)
+            val key = AlllKey(
+                FourInts(test.cp[0], test.cp[1], test.cp[2], test.cp[3]),
+                FourInts(test.co[0], test.co[1], test.co[2], test.co[3]),
+                FourInts(test.ep[0], test.ep[1], test.ep[2], test.ep[3]),
+                FourInts(test.eo[0], test.eo[1], test.eo[2], test.eo[3])
+            )
+            if (key in alllRec) {
+                val (name, alg) = alllRec[key]!!
+                val aufStr = mapOf(0 to "", 1 to "U", 2 to "U2", 3 to "U'")[auf]!!
+                if (name == "skip") {
+                    val newState = if (auf == 0) state else applyAlgStr(state, aufStr)
+                    return Pair(aufStr, newState)
+                }
+                val full = listOfNotNull(aufStr, alg).filter { it.isNotEmpty() }.joinToString(" ")
+                val newState = applyAlgStr(state, full)
+                return Pair(full, newState)
+            }
+        }
+        return Pair(null, state)
+    }
+
     fun buildOllRecognition(): Map<FourFourKey, Pair<String, String>> {
         val table = mutableMapOf<FourFourKey, Pair<String, String>>()
         val solved = CubieCube.solved()
@@ -145,7 +203,10 @@ object LLSolver {
                     CfopSolver.logFn?.invoke("oll case=$name alg=$alg")
                 }
                 val aufStr = mapOf(0 to "", 1 to "U", 2 to "U2", 3 to "U'" )[auf]!!
-                if (name == "skip") return Pair("", state)
+                if (name == "skip") {
+                    val newState = if (auf == 0) state else applyAlgStr(state, aufStr)
+                    return Pair(aufStr, newState)
+                }
                 val full = listOfNotNull(aufStr, alg).filter { it.isNotEmpty() }.joinToString(" ")
                 val newState = applyAlgStr(state, full)
                 return Pair(full, newState)
@@ -167,7 +228,10 @@ object LLSolver {
                     CfopSolver.logFn?.invoke("pll case=$name alg=$alg")
                 }
                 val aufStr = mapOf(0 to "", 1 to "U", 2 to "U2", 3 to "U'" )[auf]!!
-                if (name == "skip") return Pair("", state)
+                if (name == "skip") {
+                    val newState = if (auf == 0) state else applyAlgStr(state, aufStr)
+                    return Pair(aufStr, newState)
+                }
                 val full = listOfNotNull(aufStr, alg).filter { it.isNotEmpty() }.joinToString(" ")
                 val newState = applyAlgStr(state, full)
                 return Pair(full, newState)

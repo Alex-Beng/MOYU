@@ -66,7 +66,7 @@ suspend fun rankScramble(ctrl: Controller): String? {
 }
 
 suspend fun rankSolve(ctrl: Controller): String? {
-    ctrl.log("rank/solve: 获取面片...")
+    ctrl.log("rank/solve: 获取面片... alllProb=${ctrl.solver.alllProb} alllSize=${ctrl.solver.alllRecSize()}")
     try {
         val facelets = ctrl.getFacelets()
         if (facelets.length != 54) {

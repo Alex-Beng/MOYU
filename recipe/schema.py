@@ -73,6 +73,13 @@ class Recipe:
     cross_delay: int | None = None
     f2l_delay: int | None = None
     oll_delay: int | None = None
+    pll_delay: int | None = None
+    alll_delay: int | None = None
+    cross_time: int | None = None
+    f2l_time: int | None = None
+    oll_time: int | None = None
+    pll_time: int | None = None
+    alll_time: int | None = None
     rotation: str | None = None
     move_format: str = "dir"  # "dir" = face/dir, "str" = move string
     ui: dict[str, UIFeature] = field(default_factory=dict)
@@ -86,7 +93,11 @@ class Recipe:
             name=d["name"], device=device, mode=d.get("mode", "semi"),
             scramble_delay=d.get("scramble_delay"), solve_delay=d.get("solve_delay"),
             cross_delay=d.get("cross_delay"), f2l_delay=d.get("f2l_delay"),
-            oll_delay=d.get("oll_delay"), rotation=d.get("rotation"),
+            oll_delay=d.get("oll_delay"), pll_delay=d.get("pll_delay"),
+            alll_delay=d.get("alll_delay"), rotation=d.get("rotation"),
+            cross_time=d.get("cross_time"), f2l_time=d.get("f2l_time"),
+            oll_time=d.get("oll_time"), pll_time=d.get("pll_time"),
+            alll_time=d.get("alll_time"),
             move_format=d.get("move_format", "dir"),
             ui=ui, base_dir=base_dir,
         )

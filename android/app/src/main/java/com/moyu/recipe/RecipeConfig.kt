@@ -25,6 +25,7 @@ data class RecipeConfig(
     val ollDelay: Int?,
     val rotation: String?,
     val moveFormat: String,
+    val alllProb: Float,
     val initialState: String?,
     val ui: Map<String, UiFeature>
 ) {
@@ -89,6 +90,7 @@ object RecipeLoader {
             ollDelay = root.optInt("oll_delay", 0).takeIf { it > 0 },
             rotation = root.optString("rotation", null).takeIf { !it.isNullOrBlank() },
             moveFormat = root.optString("move_format", "dir"),
+            alllProb = root.optDouble("alll_prob", 0.1).toFloat(),
             initialState = root.optString("initial_state", null).takeIf { !it.isNullOrBlank() },
             ui = ui
         )
