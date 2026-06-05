@@ -5,6 +5,7 @@ import com.moyu.common.CubeCommand
 import com.moyu.common.CubeDelay
 import com.moyu.common.CubeMove
 import com.moyu.common.CubeMoveStr
+import com.moyu.common.CubeTime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -101,6 +102,7 @@ class CubeApi(
                 }
                 is CubeMoveStr -> obj.put("move", m.move)
                 is CubeDelay -> obj.put("delay", m.ms)
+                is CubeTime -> obj.put("time", m.ms)
             }
             arr.put(obj)
         }

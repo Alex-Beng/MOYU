@@ -13,6 +13,7 @@ data class CharBubble(val bitmap: Bitmap, val cx: Int, val cy: Int, val r: Int)
 data class CubeMove(val face: Int, val dir: Int) : CubeCommand
 data class CubeMoveStr(val move: String) : CubeCommand
 data class CubeDelay(val ms: Int) : CubeCommand
+data class CubeTime(val ms: Int) : CubeCommand
 
 sealed interface CubeCommand
 

@@ -57,6 +57,13 @@ fun RecipeEditorScreen(onSnackbar: (String) -> Unit = {}) {
     var crossDelay by remember { mutableStateOf("") }
     var f2lDelay by remember { mutableStateOf("") }
     var ollDelay by remember { mutableStateOf("") }
+    var pllDelay by remember { mutableStateOf("") }
+    var alllDelay by remember { mutableStateOf("") }
+    var crossTime by remember { mutableStateOf("") }
+    var f2lTime by remember { mutableStateOf("") }
+    var ollTime by remember { mutableStateOf("") }
+    var pllTime by remember { mutableStateOf("") }
+    var alllTime by remember { mutableStateOf("") }
     var alllProb by remember { mutableStateOf("0.1") }
     var rotation by remember { mutableStateOf("") }
     var moveFormat by remember { mutableStateOf("dir") }
@@ -78,6 +85,13 @@ fun RecipeEditorScreen(onSnackbar: (String) -> Unit = {}) {
                     crossDelay = root.optInt("cross_delay", -1).let { if (it < 0) "" else it.toString() }
                     f2lDelay = root.optInt("f2l_delay", -1).let { if (it < 0) "" else it.toString() }
                     ollDelay = root.optInt("oll_delay", -1).let { if (it < 0) "" else it.toString() }
+                    pllDelay = root.optInt("pll_delay", -1).let { if (it < 0) "" else it.toString() }
+                    alllDelay = root.optInt("alll_delay", -1).let { if (it < 0) "" else it.toString() }
+                    crossTime = root.optInt("cross_time", -1).let { if (it < 0) "" else it.toString() }
+                    f2lTime = root.optInt("f2l_time", -1).let { if (it < 0) "" else it.toString() }
+                    ollTime = root.optInt("oll_time", -1).let { if (it < 0) "" else it.toString() }
+                    pllTime = root.optInt("pll_time", -1).let { if (it < 0) "" else it.toString() }
+                    alllTime = root.optInt("alll_time", -1).let { if (it < 0) "" else it.toString() }
                     alllProb = root.optDouble("alll_prob", 0.1).toString()
                     rotation = root.optString("rotation", "")
                     moveFormat = root.optString("move_format", "dir")
@@ -129,6 +143,13 @@ fun RecipeEditorScreen(onSnackbar: (String) -> Unit = {}) {
                 putDelay("cross_delay", crossDelay)
                 putDelay("f2l_delay", f2lDelay)
                 putDelay("oll_delay", ollDelay)
+                putDelay("pll_delay", pllDelay)
+                putDelay("alll_delay", alllDelay)
+                putDelay("cross_time", crossTime)
+                putDelay("f2l_time", f2lTime)
+                putDelay("oll_time", ollTime)
+                putDelay("pll_time", pllTime)
+                putDelay("alll_time", alllTime)
                 if (rotation.isNotBlank()) root.put("rotation", rotation)
                 root.put("move_format", moveFormat)
                 alllProb.toDoubleOrNull()?.let { root.put("alll_prob", it) }
@@ -287,12 +308,32 @@ fun RecipeEditorScreen(onSnackbar: (String) -> Unit = {}) {
             OutlinedTextField(value = solveDelay, onValueChange = { solveDelay = it }, label = { Text("Solve") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
         }
         Spacer(Modifier.height(8.dp))
+        Text("Phase Delay (持续)", style = MaterialTheme.typography.labelMedium)
+        Spacer(Modifier.height(4.dp))
         Row(Modifier.fillMaxWidth()) {
             OutlinedTextField(value = crossDelay, onValueChange = { crossDelay = it }, label = { Text("Cross") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
             Spacer(Modifier.width(8.dp))
             OutlinedTextField(value = f2lDelay, onValueChange = { f2lDelay = it }, label = { Text("F2L") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
             Spacer(Modifier.width(8.dp))
             OutlinedTextField(value = ollDelay, onValueChange = { ollDelay = it }, label = { Text("OLL") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            OutlinedTextField(value = pllDelay, onValueChange = { pllDelay = it }, label = { Text("PLL") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            OutlinedTextField(value = alllDelay, onValueChange = { alllDelay = it }, label = { Text("ALLL") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("Phase Time (一次性)", style = MaterialTheme.typography.labelMedium)
+        Spacer(Modifier.height(4.dp))
+        Row(Modifier.fillMaxWidth()) {
+            OutlinedTextField(value = crossTime, onValueChange = { crossTime = it }, label = { Text("Cross") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            OutlinedTextField(value = f2lTime, onValueChange = { f2lTime = it }, label = { Text("F2L") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            OutlinedTextField(value = ollTime, onValueChange = { ollTime = it }, label = { Text("OLL") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            OutlinedTextField(value = pllTime, onValueChange = { pllTime = it }, label = { Text("PLL") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            OutlinedTextField(value = alllTime, onValueChange = { alllTime = it }, label = { Text("ALLL") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
         }
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(

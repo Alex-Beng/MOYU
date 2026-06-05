@@ -6,6 +6,7 @@ import com.moyu.common.CubeCommand
 import com.moyu.common.CubeDelay
 import com.moyu.common.CubeMove
 import com.moyu.common.CubeMoveStr
+import com.moyu.common.CubeTime
 import com.moyu.common.DetectionResult
 import com.moyu.common.Frame
 import com.moyu.device.CubeApi
@@ -202,23 +203,30 @@ class Controller(private val context: Context, recipePath: String = "rank.json")
         }
 
         if (result.cross.isNotEmpty()) {
+            if (recipe.crossTime != null && recipe.crossTime > 0) steps.add(CubeTime(recipe.crossTime))
             if (recipe.crossDelay != null && recipe.crossDelay > 0) steps.add(CubeDelay(recipe.crossDelay))
             steps.addAll(parseToCommands(result.cross))
         }
 
         if (result.f2l.isNotEmpty()) {
+            if (recipe.f2lTime != null && recipe.f2lTime > 0) steps.add(CubeTime(recipe.f2lTime))
             if (recipe.f2lDelay != null && recipe.f2lDelay > 0) steps.add(CubeDelay(recipe.f2lDelay))
             steps.addAll(parseToCommands(result.f2l))
         }
 
         if (result.alll != null && result.alll.isNotEmpty()) {
+            if (recipe.alllTime != null && recipe.alllTime > 0) steps.add(CubeTime(recipe.alllTime))
+            if (recipe.alllDelay != null && recipe.alllDelay > 0) steps.add(CubeDelay(recipe.alllDelay))
             steps.addAll(parseToCommands(result.alll))
         } else {
             if (result.oll != null && result.oll.isNotEmpty()) {
+                if (recipe.ollTime != null && recipe.ollTime > 0) steps.add(CubeTime(recipe.ollTime))
                 if (recipe.ollDelay != null && recipe.ollDelay > 0) steps.add(CubeDelay(recipe.ollDelay))
                 steps.addAll(parseToCommands(result.oll))
             }
             if (result.pll != null && result.pll.isNotEmpty()) {
+                if (recipe.pllTime != null && recipe.pllTime > 0) steps.add(CubeTime(recipe.pllTime))
+                if (recipe.pllDelay != null && recipe.pllDelay > 0) steps.add(CubeDelay(recipe.pllDelay))
                 steps.addAll(parseToCommands(result.pll))
             }
         }

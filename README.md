@@ -23,6 +23,7 @@ MOYU 是基于硬件模拟智能魔方，意图实现人类摸鱼（MOYU），�
 | **分类器后端** | knn / template / cnn(ONNX) / hog_svm | 仅 cnn（TFLite） |
 | **OCR 气泡分割** | OpenCV HoughCircles | OpenCV HoughCircles（JNI） |
 | **CFOP 求解** | Cross + F2L + OLL + PLL + ALLL | Cross + F2L + OLL + PLL + ALLL |
+| **二阶魔方求解** | ✅ RUF 限定（Ortega 简化版） | ❌ 暂未实现 |
 | **ALLL 概率控制** | `ALLL_PROB` 常量（默认 0.1） | recipe `alll_prob` 字段（默认 0.1） |
 | **ALLL 表缓存** | pickle（`.cfop_cache.pkl`） | ObjectOutputStream（`alll_rec_v2.cache`） |
 | **Recipe 延迟** | `cross/f2l/oll/pll/alll_delay` + `cross/f2l/oll/pll/alll_time` | `cross/f2l/oll_delay`（持续延迟，无 time 类型） |
@@ -79,6 +80,11 @@ moyu/
 │   ├── classifier.py          # 字符分类器（KNN/模板/CNN/HOG-SVM）
 │   ├── trainer.py             # 训练数据采集与模型训练
 │   └── parser.py              # 识别结果 → move 序列
+├── solve/
+│   ├── cfop_solver.py         # CFOP 求解器（三阶魔方）
+│   ├── pocket_solver.py       # 二阶魔方求解器（RUF 限定）
+│   ├── ALLL.py                # ALLL 算法表
+│   └── solve.py               # 求解器统一入口
 ├── device/
 │   ├── scrcpy_client.py       # scrcpy 封装
 │   ├── cube_api.py            # HTTP → ESP32
@@ -146,6 +152,41 @@ python controller.py --state scramble             # 指定初始状态
 python controller.py --telnet 5555                # 启动 Telnet REPL（默认开启）
 python controller.py --single-step                # 逐步下发（调试）
 ```
+
+### 求解器
+
+#### CFOP 求解器（三阶魔方）
+
+- **Cross**：BFS 搜索底十字（深度限制 8）
+- **F2L**：IDA* 搜索 4 个角棱对（剪枝表加速）
+- **OLL**：57 种算法识别 + AUF
+- **PLL**：21 种算法识别 + AUF
+- **ALLL**：5976 种扩展 LL 算法（可选，通过 `alll_prob` 控制）
+
+#### 二阶魔方求解器（RUF 限定）
+
+**新增功能**：专门针对二阶魔方（Pocket Cube）的求解器，仅使用 R、U、F 三个面的转动。
+
+- **适用场景**：三轴机械臂控制的二阶魔方
+- **求解方法**：简化版 Ortega 方法
+  1. **第一层（First Layer）**：使底层同色（BFS 搜索）
+  2. **定向顶层（OLL）**：使顶层同色（预定义算法 + 搜索）
+  3. **排列顶层（PBL）**：完成求解（预定义算法 + 搜索）
+- **使用方式**：
+  ```python
+  from solve import solve_pocket
+  
+  # facelet_str 为 54 字符的三阶魔方格式（仅使用角块信息）
+  result = solve_pocket(facelet_str)
+  print(result['solution'])  # 完整解法
+  print(result['first_layer'])  # 第一层步骤
+  print(result['oll'])  # OLL 步骤
+  print(result['pbl'])  # PBL 步骤
+  ```
+- **命令行测试**：
+  ```bash
+  python3 solve/solve.py 192.168.4.1 --method pocket --send
+  ```
 
 ### Telnet REPL
 

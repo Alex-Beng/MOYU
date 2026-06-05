@@ -1,1 +1,1 @@
-from .solve import solve_cfop, solve_kociemba, parse_moves
+from .solve import solve_cfop, solve_kociemba, solve_pocket, parse_moves
