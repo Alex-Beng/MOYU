@@ -555,7 +555,7 @@ def get_cross_flip_coord(state):
     return comb_val * 16 + flip_bits
 
 
-N_CROSS_PERM = 495 * 24 # 12! / 4! * 4!
+N_CROSS_PERM = 495 * 24 # C(12, 4) * 4!
 N_CROSS_FLIP = 495 * 16 # 12! / 2^4
 
 PERM_MOVE = None
