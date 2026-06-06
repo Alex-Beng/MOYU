@@ -556,7 +556,7 @@ def get_cross_flip_coord(state):
 
 
 N_CROSS_PERM = 495 * 24 # C(12, 4) * 4!
-N_CROSS_FLIP = 495 * 16 # 12! / 2^4
+N_CROSS_FLIP = 495 * 16 # C(12, 4) / 2^4
 
 PERM_MOVE = None
 FLIP_MOVE = None
