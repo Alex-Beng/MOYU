@@ -61,8 +61,10 @@ object RecipeLoader {
         recipeDir.mkdirs()
         val entries = context.assets.list("recipes") ?: emptyArray()
         for (name in entries) {
+            val target = recipeDir.resolve(name)
+            if (target.exists()) continue
             context.assets.open("recipes/$name").use { src ->
-                recipeDir.resolve(name).outputStream().use { dst -> src.copyTo(dst) }
+                target.outputStream().use { dst -> src.copyTo(dst) }
             }
         }
     }
