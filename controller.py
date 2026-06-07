@@ -27,6 +27,7 @@ from ocr.segmentor import segment
 from ocr.classifier import create_classifier
 from ocr.parser import parse
 from solve import solve_cfop
+from solve.solve import solve_pocket
 
 import cv2
 import numpy as np
@@ -212,6 +213,53 @@ class Controller:
 
         return steps
 
+    def _build_pocket_moves(self, result: dict) -> list:
+        """根据二阶求解结果构建 moves 列表。"""
+        recipe = self.recipe.recipe
+        steps = []
+
+        def _parse(move_str):
+            if recipe.move_format == "str":
+                return [{"move": t} for t in move_str.split() if t]
+            return parse_move_notation(move_str)
+
+        # cross = first_layer; oll = oll; pbl = alll
+        if result.get("first_layer"):
+            if recipe.cross_time:
+                steps.append({"time": recipe.cross_time})
+            if recipe.cross_delay:
+                steps.append({"delay": recipe.cross_delay})
+            steps.extend(_parse(result["first_layer"]))
+
+        if result.get("oll"):
+            if recipe.oll_time:
+                print("oll_time", recipe.oll_time)
+                steps.append({"time": recipe.oll_time})
+            if recipe.oll_delay:
+                steps.append({"delay": recipe.oll_delay})
+            steps.extend(_parse(result["oll"]))
+        if result.get("pbl"):
+            if recipe.alll_time:
+                print("alll_time", recipe.alll_time)
+                steps.append({"time": recipe.alll_time})
+            if recipe.alll_delay:
+                steps.append({"delay": recipe.alll_delay})
+            steps.extend(_parse(result["pbl"]))
+
+        return steps
+
+    async def _do_solve(self, facelets: str) -> dict | None:
+        """根据 recipe.cube 和 recipe.solve_method 选择求解器。
+
+        三阶: solve_cfop, 二阶: solve_pocket (ortega/eg)
+        返回求解结果 dict 或 None。
+        """
+        recipe = self.recipe.recipe
+        if recipe.cube == "pocket":
+            return solve_pocket(facelets, method=recipe.solve_method)
+        else:
+            return solve_cfop(facelets, rotation=recipe.rotation)
+
     async def _wait_for_ui(self, feature_name: str, timeout: float = 30.0) -> tuple[bool, any, any]:
         """轮询检测 UI 特征直到出现或超时。"""
         elapsed = 0.0
@@ -303,7 +351,7 @@ async def _semi_scramble(self: Controller) -> str:
 
 
 async def _semi_solve(self: Controller) -> str:
-    """获取面片 → CFOP 求解 → 下发转动 → 回到 scramble。"""
+    """获取面片 → 求解 → 下发转动 → 回到 scramble。"""
     logger.info("semi/solve: 求解...")
     facelets = await self.cube.get_facelets()
     if not facelets or len(facelets) != 54:
@@ -312,10 +360,13 @@ async def _semi_solve(self: Controller) -> str:
         return "scramble"
 
     try:
-        result = solve_cfop(facelets, rotation=self.recipe.recipe.rotation)
+        result = await self._do_solve(facelets)
         solution = result["solution"]
         logger.info("semi/solve: %s (%d步)", solution, len(solution.split()))
-        await self.move_queue.put(self._build_phased_moves(result))
+        if self.recipe.recipe.cube == "pocket":
+            await self.move_queue.put(self._build_pocket_moves(result))
+        else:
+            await self.move_queue.put(self._build_phased_moves(result))
     except Exception as e:
         logger.error("semi/solve 失败: %s", e, exc_info=True)
     return "scramble"
@@ -414,7 +465,7 @@ async def _rank_scramble(self: Controller) -> str:
 
 
 async def _rank_solve(self: Controller) -> str:
-    """获取面片 → CFOP 求解 → 下发转动 → 同时检测 scramble 和 end_rank。"""
+    """获取面片 → 求解 → 下发转动 → 同时检测 scramble 和 end_rank。"""
     logger.info("rank/solve: 求解...")
     facelets = await self.cube.get_facelets()
     if not facelets or len(facelets) != 54:
@@ -423,10 +474,13 @@ async def _rank_solve(self: Controller) -> str:
         return "solve"
 
     try:
-        result = solve_cfop(facelets, rotation=self.recipe.recipe.rotation)
+        result = await self._do_solve(facelets)
         solution = result["solution"]
         logger.info("rank/solve: %s (%d步)", solution, len(solution.split()))
-        await self.move_queue.put(self._build_phased_moves(result))
+        if self.recipe.recipe.cube == "pocket":
+            await self.move_queue.put(self._build_pocket_moves(result))
+        else:
+            await self.move_queue.put(self._build_phased_moves(result))
     except Exception as e:
         logger.error("rank/solve 失败: %s", e, exc_info=True)
 
@@ -528,7 +582,7 @@ async def _holder_scramble(self: Controller) -> str:
 
 
 async def _holder_solve(self: Controller) -> str:
-    """获取面片 → CFOP 求解 → 下发转动 → 等待 re_holder。"""
+    """获取面片 → 求解 → 下发转动 → 等待 re_holder。"""
     logger.info("holder/solve: 求解...")
     facelets = await self.cube.get_facelets()
     if not facelets or len(facelets) != 54:
@@ -536,10 +590,13 @@ async def _holder_solve(self: Controller) -> str:
         return "solve"
 
     try:
-        result = solve_cfop(facelets, rotation=self.recipe.recipe.rotation)
+        result = await self._do_solve(facelets)
         solution = result["solution"]
         logger.info("holder/solve: %s (%d步)", solution, len(solution.split()))
-        await self.move_queue.put(self._build_phased_moves(result))
+        if self.recipe.recipe.cube == "pocket":
+            await self.move_queue.put(self._build_pocket_moves(result))
+        else:
+            await self.move_queue.put(self._build_phased_moves(result))
     except Exception as e:
         logger.error("holder/solve 失败: %s", e)
 
@@ -583,7 +640,7 @@ async def _team_scramble(self: Controller) -> str:
     return await _rank_scramble(self)
 
 async def _team_solve(self: Controller) -> str:
-    """获取面片 → CFOP 求解 → 下发转动 → 等待 re_holder。"""
+    """获取面片 → 求解 → 下发转动 → 等待 re_holder。"""
     logger.info("team/solve: 求解...")
     facelets = await self.cube.get_facelets()
     if not facelets or len(facelets) != 54:
@@ -591,10 +648,13 @@ async def _team_solve(self: Controller) -> str:
         return "solve"
 
     try:
-        result = solve_cfop(facelets, rotation=self.recipe.recipe.rotation)
+        result = await self._do_solve(facelets)
         solution = result["solution"]
         logger.info("team/solve: %s (%d步)", solution, len(solution.split()))
-        await self.move_queue.put(self._build_phased_moves(result))
+        if self.recipe.recipe.cube == "pocket":
+            await self.move_queue.put(self._build_pocket_moves(result))
+        else:
+            await self.move_queue.put(self._build_phased_moves(result))
     except Exception as e:
         logger.error("team/solve 失败: %s", e)
 
@@ -687,7 +747,7 @@ async def _week_scramble(self: Controller) -> str:
 
 
 async def _week_solve(self: Controller) -> str:
-    """获取面片 → CFOP 求解 → 下发转动 → 同时检测 scramble 和 continue_week 和 re_week。"""
+    """获取面片 → 求解 → 下发转动 → 同时检测 scramble 和 continue_week 和 re_week。"""
     logger.info("week/solve: 求解...")
     facelets = await self.cube.get_facelets()
     if not facelets or len(facelets) != 54:
@@ -695,10 +755,13 @@ async def _week_solve(self: Controller) -> str:
         return "solve"
 
     try:
-        result = solve_cfop(facelets, rotation=self.recipe.recipe.rotation)
+        result = await self._do_solve(facelets)
         solution = result["solution"]
         logger.info("week/solve: %s (%d步)", solution, len(solution.split()))
-        await self.move_queue.put(self._build_phased_moves(result))
+        if self.recipe.recipe.cube == "pocket":
+            await self.move_queue.put(self._build_pocket_moves(result))
+        else:
+            await self.move_queue.put(self._build_phased_moves(result))
     except Exception as e:
         logger.error("week/solve 失败: %s", e)
 

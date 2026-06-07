@@ -68,6 +68,8 @@ class Recipe:
     name: str
     device: DeviceConfig
     mode: str = "semi"
+    cube: str = "rubik"            # "rubik" = 三阶, "pocket" = 二阶
+    solve_method: str = "cfop"     # 三阶: "cfop", 二阶: "ortega"/"eg"
     scramble_delay: int | None = None
     solve_delay: int | None = None
     cross_delay: int | None = None
@@ -91,6 +93,7 @@ class Recipe:
         ui = {k: UIFeature.from_dict(v) for k, v in d.get("ui", {}).items()}
         return cls(
             name=d["name"], device=device, mode=d.get("mode", "semi"),
+            cube=d.get("cube", "rubik"), solve_method=d.get("solve_method", "cfop"),
             scramble_delay=d.get("scramble_delay"), solve_delay=d.get("solve_delay"),
             cross_delay=d.get("cross_delay"), f2l_delay=d.get("f2l_delay"),
             oll_delay=d.get("oll_delay"), pll_delay=d.get("pll_delay"),
@@ -121,6 +124,14 @@ def validate(d: dict):
         raise ValueError("device 必须包含 width 和 height")
     if d.get("mode") not in (None, "semi", "rank", "holder", "team", "week", "remote"):
         raise ValueError(f"不支持的 mode: {d.get('mode')}")
+    cube = d.get("cube", "rubik")
+    if cube not in ("rubik", "pocket"):
+        raise ValueError(f"不支持的 cube: {cube}")
+    solve_method = d.get("solve_method", "cfop" if cube == "rubik" else "eg")
+    if cube == "rubik" and solve_method not in ("cfop",):
+        raise ValueError(f"三阶不支持的 solve_method: {solve_method}")
+    if cube == "pocket" and solve_method not in ("ortega", "eg"):
+        raise ValueError(f"二阶不支持的 solve_method: {solve_method}")
     for feat_name, feat in d.get("ui", {}).items():
         if "template" not in feat:
             raise ValueError(f"ui.{feat_name} 缺少 template")

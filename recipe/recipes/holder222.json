@@ -1,0 +1,32 @@
+{
+    "name": "xiaomi 13 holder 222",
+    "mode": "holder",
+    "cube": "pocket",
+    "solve_method": "ortega",
+    "device": {
+        "width": 1080,
+        "height": 2400
+    },
+    "scramble_delay": 90,
+    "solve_delay": 90,
+    "cross_delay": 80,
+    "f2l_delay": 100,
+    "oll_delay": 80,
+    "oll_time": 200,
+    "alll_time": 200,
+    "rotation": "z",
+    "ui": {
+        "begin_holder": {
+            "template": "../../templates/begin_holder.png",
+            "roi": null,
+            "threshold": 0.85,
+            "desc": "擂台赛开始挑战按钮"
+        },
+        "re_holder": {
+            "template": "../../templates/re_holder.png",
+            "roi": null,
+            "threshold": 0.80,
+            "desc": "结算返回按钮"
+        }
+    }
+}
