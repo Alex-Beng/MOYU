@@ -102,14 +102,17 @@ def solve_cfop(facelets, debug=False, rotation=None):
         "rotation": rotation,
     }
 
-def solve_pocket(facelets, debug=False):
-    """求解二阶魔方（RUF 限定）"""
+def solve_pocket(facelets, method='ortega', debug=False):
+    """求解二阶魔方（RUF 限定）
+
+    method: 'ortega' = 第一层→OLL→PBL, 'eg' = 第一层→EG一步求解
+    """
     try:
         from solve.pocket_solver import PocketSolver
     except ImportError:
         raise RuntimeError("pocket_solver.py not found in solve/")
 
-    solver = PocketSolver()
+    solver = PocketSolver(method=method)
     result = solver.solve(facelets)
     if result is None:
         raise RuntimeError("No pocket cube solution found")
@@ -120,8 +123,9 @@ def solve_pocket(facelets, debug=False):
     total_n = first_n + oll_n + pbl_n
 
     logger.info("  First Layer (%d): %s", first_n, result['first_layer'])
-    logger.info("  OLL         (%d): %s", oll_n, result['oll'])
-    logger.info("  PBL         (%d): %s", pbl_n, result['pbl'])
+    if oll_n:
+        logger.info("  OLL         (%d): %s", oll_n, result['oll'])
+    logger.info("  PBL/EG      (%d): %s", pbl_n, result['pbl'])
     logger.info("  Total       : %d moves", total_n)
 
     return result
@@ -181,7 +185,7 @@ def send_moves(base, moves):
 def main():
     parser = argparse.ArgumentParser(description='GAN Cube Solver')
     parser.add_argument('host', nargs='?', default='192.168.50.246', help='Device IP address')
-    parser.add_argument('--method', choices=['cfop', 'kociemba', 'min2phase', 'pocket'], default='cfop', help='Solving method (default: cfop)')
+    parser.add_argument('--method', choices=['cfop', 'kociemba', 'min2phase', 'pocket_o', 'pocket_eg'], default='cfop', help='Solving method (default: cfop)')
     parser.add_argument('--send', action='store_true', help='Send solution to device')
     parser.add_argument('--debug', action='store_true', help='Enable debug output')
     parser.add_argument('--rotation', choices=['x', "x'", 'z', "z'", 'z2'], default=None, help='Pre-rotation to change bottom face')
@@ -200,8 +204,10 @@ def main():
     print(f"Solving with {args.method.upper()}...")
     if args.method == 'cfop':
         solution = solve_cfop(facelets, debug=args.debug, rotation=args.rotation)
-    elif args.method == 'pocket':
-        solution = solve_pocket(facelets, debug=args.debug)
+    elif args.method == 'pocket_o':
+        solution = solve_pocket(facelets, method='ortega', debug=args.debug)
+    elif args.method == 'pocket_eg':
+        solution = solve_pocket(facelets, method='eg', debug=args.debug)
     elif args.method == 'kociemba':
         solution = solve_kociemba(facelets)
     else:
