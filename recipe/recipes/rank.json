@@ -10,6 +10,7 @@
     "cross_delay": 90,
     "f2l_delay": 150,
     "oll_delay": 90,
+    "rotation": "z",
     "ui": {
         "begin_rank": {
             "template": "../../templates/begin_rank.png",
