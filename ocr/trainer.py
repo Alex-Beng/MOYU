@@ -354,11 +354,14 @@ def train_cnn(data_dir: str, model_output: str, epochs: int = 20, batch_size: in
     logger.info("CNN 权重已保存: %s", weights_path)
 
     # 显示所有分类错误的图片
-    x_cpu = x_tensor.to("cpu")
-    y_cpu = y_tensor.to("cpu")
+    model.eval().to("cpu")
+    all_preds = []
+    eval_loader = DataLoader(TensorDataset(x_tensor), batch_size=batch_size, shuffle=False, drop_last=False)
     with torch.no_grad():
-        output = model.to("cpu")(x_cpu)
-        preds = output.argmax(dim=1).numpy()
+        for (batch_x,) in eval_loader:
+            out = model(batch_x)
+            all_preds.append(out.argmax(dim=1))
+    preds = torch.cat(all_preds).numpy()
     gt_arr = labels
     errors = [(i, preds[i], gt) for i, gt in enumerate(gt_arr) if preds[i] != gt]
     if not errors:
