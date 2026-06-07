@@ -2,7 +2,7 @@
     "name": "xiaomi 13 holder 222",
     "mode": "holder",
     "cube": "pocket",
-    "solve_method": "ortega",
+    "solve_method": "eg",
     "device": {
         "width": 1080,
         "height": 2400
