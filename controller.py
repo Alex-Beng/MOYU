@@ -33,7 +33,7 @@ import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
-DEBUG = False
+DEBUG = True
 
 
 class Controller:
@@ -46,7 +46,7 @@ class Controller:
         self.cube = CubeAPI(single_step=single_step)
         self.detector = Detector(self.recipe.recipe)
 
-        self.classifier_config =  classifier_config or {"type": "knn"}
+        self.classifier_config =  classifier_config or {"type": "cnn"}
         self.classifier = None
 
         self.ui_event_queue: asyncio.Queue = asyncio.Queue()
