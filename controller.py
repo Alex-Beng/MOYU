@@ -60,6 +60,7 @@ class Controller:
         self._scramble_seen_move = False
         self._no_scramble_cnt = 0
         self._last_move = None
+        self._prev_segment_coords: list[tuple[int, int]] | None = None
         self._running = False
         self._init_state()
         if initial_state is not None:
@@ -321,7 +322,13 @@ async def _semi_scramble(self: Controller) -> str:
         mid = frame.shape[0] // 2
         crop = frame[mid:, :]
 
-    chars = segment(crop)
+    chars = segment(crop, prev_coords=self._prev_segment_coords)
+    if chars is None:
+        logger.debug("semi/scramble: 打乱中，跳过")
+        await asyncio.sleep(0.5)
+        return "scramble"
+    if chars:
+        self._prev_segment_coords = [(cx, cy) for _, (cx, cy, _) in chars]
     if chars and self.classifier:
         # if not self._scramble_seen_move:
         #     await self.cube.clear_moves()
@@ -343,6 +350,7 @@ async def _semi_scramble(self: Controller) -> str:
                 logger.info("scramble: 无字符区域且已下发过转动，进入 solve")
                 self._scramble_seen_move = False
                 self._no_scramble_cnt = 0
+                self._prev_segment_coords = None
                 return "solve"
             logger.debug("scramble: 无字符区域，等待打乱出现...")
 
@@ -387,6 +395,7 @@ async def _rank_init(self: Controller) -> str:
     if ok:
         await self._click_feature("begin_rank")
         await asyncio.sleep(2.0)
+        self._prev_segment_coords = None
         return "scramble"
     return "init"
 
@@ -414,8 +423,13 @@ async def _rank_scramble(self: Controller) -> str:
         mid = frame.shape[0] // 2
         crop = frame[mid:, :]
 
-    chars = segment(crop)
+    chars = segment(crop, prev_coords=self._prev_segment_coords)
+    if chars is None:
+        logger.debug("rank/scramble: 打乱中，跳过")
+        await asyncio.sleep(0.5)
+        return "scramble"
     if chars:
+        self._prev_segment_coords = [(cx, cy) for _, (cx, cy, _) in chars]
         # if not self._scramble_seen_move:
         #     await self.cube.clear_moves()
         logger.debug("rank/scramble: 检测到 %d 个字符区域，识别中...", len(chars))
@@ -448,6 +462,7 @@ async def _rank_scramble(self: Controller) -> str:
                     logger.info("rank/scramble: 无有效转动且持续多帧，可能打乱结束，进入 solve")
                     self._scramble_seen_move = False
                     self._no_scramble_cnt = 0
+                    self._prev_segment_coords = None
                     return "solve"
         await asyncio.sleep(1.0)
         return "scramble"
@@ -457,6 +472,7 @@ async def _rank_scramble(self: Controller) -> str:
             logger.info("rank/scramble: 无字符区域，进入 solve")
             self._scramble_seen_move = False
             self._no_scramble_cnt = 0
+            self._prev_segment_coords = None
             await asyncio.sleep(1.0)
             return "solve"
         logger.debug("rank/scramble: 无字符区域，等待出现转动气泡...")
@@ -487,6 +503,7 @@ async def _rank_solve(self: Controller) -> str:
     self._scramble_seen_move = False
     self._no_scramble_cnt = 0
     self._last_move = None
+    self._prev_segment_coords = None
     logger.info("rank/solve: 同时检测 scramble 和 end_rank...")
     elapsed = 0.0
     while elapsed < 180.0:
@@ -517,9 +534,14 @@ async def _rank_solve(self: Controller) -> str:
         else:
             mid = frame.shape[0] // 2
             crop = frame[mid:, :]
-        chars = segment(crop)
+        chars = segment(crop, prev_coords=self._prev_segment_coords)
+        if chars is None:
+            logger.debug("rank/solve: 打乱中，跳过")
+            await asyncio.sleep(0.5)
+            elapsed += 0.5
+            continue
         if chars:
-            logger.debug("rank/solve: 检测到 %d 个字符区域", len(chars))
+            self._prev_segment_coords = [(cx, cy) for _, (cx, cy, _) in chars]
             logger.debug("rank/solve: 检测到 %d 个字符区域", len(chars))
             if self.classifier:
                 char_imgs = [c[0] for c in chars]
@@ -538,12 +560,14 @@ async def _rank_re_rank(self: Controller) -> str:
     """检测并点击 re_rank 按钮，返回 scramble。"""
     self._scramble_seen_move = False
     self._no_scramble_cnt = 0
+    self._prev_segment_coords = None
     logger.info("rank/re_rank: 等待 re_rank...")
     ok, _, center = await self._wait_for_ui("re_rank", timeout=5.0)
     if ok and center:
         logger.info("rank/re_rank: 点击 re_rank")
         self.scrcpy.tap(*center)
         await asyncio.sleep(2.0)
+        self._prev_segment_coords = None
         return "scramble"
     else:
         # 说明直接被踢回init界面了
@@ -572,6 +596,7 @@ async def _holder_init(self: Controller) -> str:
         logger.info("holder/init: 点击 begin_holder")
         self.scrcpy.tap(*center)
         await asyncio.sleep(2.0)
+        self._prev_segment_coords = None
         return "scramble"
     return "init"
 
@@ -613,6 +638,7 @@ async def _holder_solve(self: Controller) -> str:
 async def _holder_re_holder(self: Controller) -> str:
     """re_holder 点击后回到 init 等待下一把。"""
     logger.info("holder/re_holder: 返回 init")
+    self._prev_segment_coords = None
     await asyncio.sleep(1.0)
     return "init"
 #endregion holder
@@ -632,6 +658,7 @@ async def _team_init(self: Controller) -> str:
     if ok:
         await self._click_feature("begin_team")
         await asyncio.sleep(2.0)
+        self._prev_segment_coords = None
         return "scramble"
     return "init"
 
@@ -658,7 +685,8 @@ async def _team_solve(self: Controller) -> str:
     except Exception as e:
         logger.error("team/solve 失败: %s", e)
 
-    logger.info("team/solve: 同时检测 scramble 和 continue_team 和 re_team...")
+    self._prev_segment_coords = None
+    logger.info("week/solve: 同时检测 scramble 和 continue_week 和 re_week...")
     elapsed = 0.0
     while elapsed < 180.0:
         frame = self.scrcpy.last_frame
@@ -688,9 +716,14 @@ async def _team_solve(self: Controller) -> str:
         else:
             mid = frame.shape[0] // 2
             crop = frame[mid:, :]
-        chars = segment(crop)
+        chars = segment(crop, prev_coords=self._prev_segment_coords)
+        if chars is None:
+            logger.debug("team/solve: 打乱中，跳过")
+            await asyncio.sleep(0.5)
+            elapsed += 0.5
+            continue
         if chars:
-            logger.debug("team/solve: 检测到 %d 个字符区域", len(chars))
+            self._prev_segment_coords = [(cx, cy) for _, (cx, cy, _) in chars]
             logger.debug("team/solve: 检测到 %d 个字符区域", len(chars))
             if self.classifier:
                 char_imgs = [c[0] for c in chars]
@@ -717,6 +750,7 @@ async def _team_re_team(self: Controller) -> str:
         matched, center = self.detector.detect(frame, "re_team")
         if not matched:
             logger.info("team/re_team: re_team 消失，跳转 init")
+            self._prev_segment_coords = None
             return "init"
         await self._click_feature("re_team")
         await asyncio.sleep(0.5)
@@ -737,6 +771,7 @@ async def _week_init(self: Controller) -> str:
     if ok:
         await self._click_feature("begin_team")
         await asyncio.sleep(2.0)
+        self._prev_segment_coords = None
         return "scramble"
     return "init"
 
@@ -765,6 +800,7 @@ async def _week_solve(self: Controller) -> str:
     except Exception as e:
         logger.error("week/solve 失败: %s", e)
 
+    self._prev_segment_coords = None
     logger.info("week/solve: 同时检测 scramble 和 continue_week 和 re_week...")
     elapsed = 0.0
     while elapsed < 180.0:
@@ -795,8 +831,14 @@ async def _week_solve(self: Controller) -> str:
         else:
             mid = frame.shape[0] // 2
             crop = frame[mid:, :]
-        chars = segment(crop)
+        chars = segment(crop, prev_coords=self._prev_segment_coords)
+        if chars is None:
+            logger.debug("week/solve: 打乱中，跳过")
+            await asyncio.sleep(0.5)
+            elapsed += 0.5
+            continue
         if chars:
+            self._prev_segment_coords = [(cx, cy) for _, (cx, cy, _) in chars]
             logger.debug("week/solve: 检测到 %d 个字符区域", len(chars))
             if self.classifier:
                 char_imgs = [c[0] for c in chars]
@@ -820,6 +862,7 @@ async def _week_re_week(self: Controller) -> str:
     if ok:
         await self._click_feature("re_week")
         await asyncio.sleep(2.0)
+        self._prev_segment_coords = None
         return "init"
     return "re_week"
 #endregion
@@ -838,6 +881,7 @@ async def _remote_scramble(self: Controller) -> str:
 
 async def _remote_solve(self: Controller) -> str:
     """等待下一把打乱出现：持续检测圆形区域，有有效转动时回到 scramble。"""
+    self._prev_segment_coords = None
     frame = self.scrcpy.last_frame
     if frame is None:
         await asyncio.sleep(0.5)
@@ -850,7 +894,13 @@ async def _remote_solve(self: Controller) -> str:
     else:
         mid = frame.shape[0] // 2
         crop = frame[mid:, :]
-    chars = segment(crop)
+    chars = segment(crop, prev_coords=self._prev_segment_coords)
+    if chars is None:
+        logger.debug("remote/solve: 打乱中，跳过")
+        await asyncio.sleep(0.5)
+        return "solve"
+    if chars:
+        self._prev_segment_coords = [(cx, cy) for _, (cx, cy, _) in chars]
     if chars and self.classifier:
         char_imgs = [c[0] for c in chars]
         labels = self.classifier.predict_batch(char_imgs)
