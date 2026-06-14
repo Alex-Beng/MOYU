@@ -269,7 +269,7 @@ class FloatLogService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.END
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             x = 0; y = 0
         }
         wm.addView(overlayView, params)
