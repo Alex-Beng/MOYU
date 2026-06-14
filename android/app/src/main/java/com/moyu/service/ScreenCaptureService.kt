@@ -44,6 +44,42 @@ class ScreenCaptureService : Service() {
         private set
     private var screenDpi = 0
 
+    private val imageListener = ImageReader.OnImageAvailableListener { reader ->
+        if (!capturing) return@OnImageAvailableListener
+        try {
+            val image = reader.acquireLatestImage() ?: return@OnImageAvailableListener
+            val imgW = image.width
+            val imgH = image.height
+            val planes = image.planes
+            val buffer = planes[0].buffer
+            val pixelStride = planes[0].pixelStride
+            val rowStride = planes[0].rowStride
+            val rowPadding = rowStride - pixelStride * imgW
+            val bmp = Bitmap.createBitmap(imgW + rowPadding / pixelStride, imgH, Bitmap.Config.ARGB_8888)
+            bmp.copyPixelsFromBuffer(buffer)
+            image.close()
+            val newFrame = Frame(bmp, System.currentTimeMillis())
+            val old = synchronized(frameLock) {
+                val prev = recentFrame?.bitmap
+                recentFrame = newFrame
+                prev
+            }
+            if (old != null && !old.isRecycled) old.recycle()
+        } catch (_: Throwable) {}
+    }
+
+    private val mediaProjectionCallback = object : MediaProjection.Callback() {
+        override fun onCapturedContentResize(width: Int, height: Int) {
+            if (capturing && (width != screenW || height != screenH)) {
+                FloatLogService.instance?.appendLog("截屏内容尺寸变化: ${screenW}x${screenH} → ${width}x${height}，调整截屏")
+                resizeCapture(width, height)
+            }
+        }
+        override fun onStop() {
+            FloatLogService.instance?.appendLog("MediaProjection 已停止")
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -72,6 +108,7 @@ class ScreenCaptureService : Service() {
                 mediaProjection = mpm.getMediaProjection(resultCode, data)
                 captureThread = HandlerThread("capture").also { it.start() }
                 captureHandler = Handler(captureThread!!.looper)
+                mediaProjection!!.registerCallback(mediaProjectionCallback, captureHandler)
                 setupCapture()
                 startController()
             }
@@ -84,10 +121,8 @@ class ScreenCaptureService : Service() {
         if (mediaProjection != null) {
             val (w, h) = getScreenSize()
             if (w != screenW || h != screenH) {
-                FloatLogService.instance?.appendLog("屏幕旋转: ${screenW}x${screenH} → ${w}x${h}，重建截屏")
-                teardownCapture()
-                setupCapture()
-                restartController()
+                FloatLogService.instance?.appendLog("屏幕旋转: ${screenW}x${screenH} → ${w}x${h}，调整截屏")
+                resizeCapture(w, h)
             }
         }
     }
@@ -125,27 +160,7 @@ class ScreenCaptureService : Service() {
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 reader.surface, null, null
             )
-            reader.setOnImageAvailableListener({ r ->
-                if (!capturing) return@setOnImageAvailableListener
-                try {
-                    val image = r.acquireLatestImage() ?: return@setOnImageAvailableListener
-                    val planes = image.planes
-                    val buffer = planes[0].buffer
-                    val pixelStride = planes[0].pixelStride
-                    val rowStride = planes[0].rowStride
-                    val rowPadding = rowStride - pixelStride * w
-                    val bmp = Bitmap.createBitmap(w + rowPadding / pixelStride, h, Bitmap.Config.ARGB_8888)
-                    bmp.copyPixelsFromBuffer(buffer)
-                    image.close()
-                    val newFrame = Frame(bmp, System.currentTimeMillis())
-                    val old = synchronized(frameLock) {
-                        val prev = recentFrame?.bitmap
-                        recentFrame = newFrame
-                        prev
-                    }
-                    if (old != null && !old.isRecycled) old.recycle()
-                } catch (_: Throwable) {}
-            }, handler)
+            reader.setOnImageAvailableListener(imageListener, handler)
 
             imageReader = reader
             virtualDisplay = vd
@@ -153,6 +168,24 @@ class ScreenCaptureService : Service() {
             FloatLogService.instance?.appendLog("截屏服务已启动 (${w}x${h})")
         } catch (e: Exception) {
             FloatLogService.instance?.appendLog("截屏启动失败: ${e.message}")
+        }
+    }
+
+    private fun resizeCapture(w: Int, h: Int) {
+        screenDpi = resources.displayMetrics.densityDpi
+        try {
+            val newReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+            newReader.setOnImageAvailableListener(imageListener, captureHandler)
+            virtualDisplay?.resize(w, h, screenDpi)
+            virtualDisplay?.setSurface(newReader.surface)
+            imageReader?.close()
+            imageReader = newReader
+            screenW = w
+            screenH = h
+            captureStartTime = System.currentTimeMillis()
+            FloatLogService.instance?.appendLog("截屏尺寸已调整为 ${w}x${h}")
+        } catch (e: Exception) {
+            FloatLogService.instance?.appendLog("截屏调整失败: ${e.message}")
         }
     }
 
@@ -172,12 +205,6 @@ class ScreenCaptureService : Service() {
         try {
             Frame(f.bitmap.copy(f.bitmap.config ?: Bitmap.Config.ARGB_8888, false), f.timestampMs)
         } catch (_: Exception) { null }
-    }
-
-    private fun restartController() {
-        FloatLogService.instance?.appendLog("屏幕旋转，重启控制器...")
-        stopService(Intent(this, ControllerService::class.java))
-        startController()
     }
 
     private fun startController() {
