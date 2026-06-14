@@ -25,11 +25,11 @@ class CfopSolver {
 
         private val FACE_CHARS = charArrayOf('U', 'R', 'F', 'D', 'L', 'B')
         private val COLOR_MAP: Map<String, IntArray> = mapOf(
-            "z"  to intArrayOf(4,0,2,1,3,5),
-            "z'" to intArrayOf(1,3,2,4,0,5),
+            "z"  to intArrayOf(1,3,2,4,0,5),
+            "z'" to intArrayOf(4,0,2,1,3,5),
             "z2" to intArrayOf(3,4,2,0,1,5),
-            "x"  to intArrayOf(2,1,3,5,4,0),
-            "x'" to intArrayOf(5,1,0,2,4,3),
+            "x"  to intArrayOf(5,1,0,2,4,3),
+            "x'" to intArrayOf(2,1,3,5,4,0),
         )
 
         fun applyFaceletRotation(faceletStr: String, rot: String): String {
