@@ -22,8 +22,7 @@ HOUGH_PARAM2 = 22         # 圆心检测累加器阈值，越小检测到越多�
 HOUGH_MIN_RADIUS = 51
 HOUGH_MAX_RADIUS = 60
 
-# 判定两次检测是否为同一气泡的距离阈值（像素）
-_COORD_MATCH_DIST = 30
+
 
 
 def detect_circles(gray: np.ndarray) -> list[tuple[int, int, int]]:
@@ -63,42 +62,26 @@ def crop_circle(frame: np.ndarray, cx: int, cy: int, r: int) -> np.ndarray:
     return cv2.resize(crop, CHAR_SIZE)
 
 
-def segment(frame: np.ndarray,
-            enable_right_predict: bool = True,
-            prev_coords: list[tuple[int, int]] | None = None
-            ) -> list[tuple[np.ndarray, tuple[int, int, int]]] | None:
+def segment(frame: np.ndarray) -> list[tuple[np.ndarray, tuple[int, int, int]]]:
     """从帧中检测圆形气泡并分割出字符图像。
 
     Args:
         frame: BGR ndarray（整帧或打乱区域截图）
-        enable_right_predict: 是否在每颗气泡右侧追加同尺寸区域用于预测。
-        prev_coords: 上一次 segment 返回的圆心坐标列表。若本次检测到的
-                     任一圆心与 prev_coords 中的坐标接近，则认为气泡位置
-                     未变化（打乱中），返回 None。
 
     Returns:
         [(char_img, (cx, cy, r)), ...] —— 按从左到右、从上到下排序的字符图列表。
         char_img 已归一化到 CHAR_SIZE，BGR 格式。
-        若检测到打乱中（气泡位置与上一次相同），返回 None。
     """
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     # 轻微模糊降噪，提高 HoughCircles 稳定性
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     circles = detect_circles(blurred)
 
-    # 检查圆心是否与上一次接近 → 判定为重复帧（打乱中）
-    if prev_coords is not None:
-        for cx, cy, _ in circles:
-            for px, py in prev_coords:
-                if abs(cx - px) < _COORD_MATCH_DIST and abs(cy - py) < _COORD_MATCH_DIST:
-                    logger.debug("打乱中：气泡位置未变化，跳过")
-                    return None
-
     result = []
     for cx, cy, r in circles:
         char_img = crop_circle(frame, cx, cy, r)
         result.append((char_img, (cx, cy, r)))
-        if enable_right_predict:
+        if True: # 尝试添加右侧相同大小区域，用于预测
             for i in range(4):
                 nx = int(cx + 2.345*r*(i+1))
                 if nx < frame.shape[1]:
