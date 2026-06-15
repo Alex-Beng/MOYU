@@ -16,39 +16,35 @@ suspend fun rankInit(ctrl: Controller): String? {
 }
 
 suspend fun rankScramble(ctrl: Controller): String? {
-    val frame = ctrl.lastFrameBitmap() ?: run { delay(500); return "scramble" }
-    ctrl.log("semi/scramble frame=${frame.width}x${frame.height} ts=${ctrl.lastFrame()?.timestampMs}")
-    val feature = ctrl.recipe.feature("scramble_area")
-    val crop = if (feature != null && feature.roi != null) {
-        val r = feature.roi
-        Bitmap.createBitmap(frame, r.x, r.y, r.w, r.h)
-    } else frame
+    val bubbles = ctrl.useFrame { frame ->
+        ctrl.log("ocr frame=${frame.width}x${frame.height}")
+        val feature = ctrl.recipe.feature("scramble_area")
+        val crop = if (feature != null && feature.roi != null) {
+            val r = feature.roi
+            Bitmap.createBitmap(frame, r.x, r.y, r.w, r.h)
+        } else frame
+        try {
+            BubbleSegmentor.segment(crop)
+        } catch (e: Exception) {
+            ctrl.log("OCR 错误: ${e.message}")
+            null
+        } finally {
+            if (crop !== frame) crop.recycle()
+        }
+    } ?: run { delay(500); return "scramble" }
 
-    try {
-        val bubbles = BubbleSegmentor.segment(crop)
-        ctrl.log("OCR: 检测到 ${bubbles.size} 个气泡 (frame=${crop.width}x${crop.height})")
-        if (bubbles.isNotEmpty()) {
-            // if (!ctrl.scrambleSeenMove) {
-            //     ctrl.clearMoves()
-            // }
-            val labels = ctrl.classifier.predictBatch(bubbles.map { it.bitmap })
-            val moves = MoveParser.parse(labels)
-            ctrl.log("OCR: labels=$labels moves=$moves")
-            if (moves.isNotEmpty()) {
-                ctrl.scrambleSeenMove = true
-                ctrl.noScrambleCnt = 0
-                ctrl.queueMoves(moves)
-                ctrl.log("打乱: $moves")
-                delay(500)
-            } else {
-                ctrl.noScrambleCnt++
-                if (ctrl.scrambleSeenMove && ctrl.noScrambleCnt > 1) {
-                    ctrl.scrambleSeenMove = false
-                    ctrl.noScrambleCnt = 0
-                    delay(1000)
-                    return "solve"
-                }
-            }
+    ctrl.log("OCR: 检测到 ${bubbles.size} 个气泡")
+    if (bubbles.isNotEmpty()) {
+        val labels = ctrl.classifier.predictBatch(bubbles.map { it.bitmap })
+        bubbles.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
+        val moves = MoveParser.parse(labels)
+        ctrl.log("OCR: labels=$labels moves=$moves")
+        if (moves.isNotEmpty()) {
+            ctrl.scrambleSeenMove = true
+            ctrl.noScrambleCnt = 0
+            ctrl.queueMoves(moves)
+            ctrl.log("打乱: $moves")
+            delay(500)
         } else {
             ctrl.noScrambleCnt++
             if (ctrl.scrambleSeenMove && ctrl.noScrambleCnt > 1) {
@@ -58,8 +54,14 @@ suspend fun rankScramble(ctrl: Controller): String? {
                 return "solve"
             }
         }
-    } catch (e: Exception) {
-        ctrl.log("OCR 错误: ${e.message}")
+    } else {
+        ctrl.noScrambleCnt++
+        if (ctrl.scrambleSeenMove && ctrl.noScrambleCnt > 1) {
+            ctrl.scrambleSeenMove = false
+            ctrl.noScrambleCnt = 0
+            delay(1000)
+            return "solve"
+        }
     }
     delay(1000)
     return "scramble"
@@ -89,12 +91,29 @@ suspend fun rankSolve(ctrl: Controller): String? {
         val start = System.currentTimeMillis()
         val timeout = 180_000L
         while (System.currentTimeMillis() - start < timeout) {
-            val frame = ctrl.lastFrameBitmap() ?: run { delay(500); continue }
-
-            val result = ctrl.detector.detectAny(frame,
-                listOf("end_rank", "re_rank"))
-            val endName = result.first
-            when (endName) {
+            val action = ctrl.useFrame { frame ->
+                val (endName, _) = ctrl.detector.detectAny(frame,
+                    listOf("end_rank", "re_rank"))
+                if (endName != null) {
+                    endName
+                } else {
+                    val feature = ctrl.recipe.feature("scramble_area")
+                    val crop = if (feature != null && feature.roi != null) {
+                        val r = feature.roi
+                        Bitmap.createBitmap(frame, r.x, r.y, r.w, r.h)
+                    } else frame
+                    try {
+                        val bubbles = BubbleSegmentor.segment(crop)
+                        val hasNew = if (bubbles.isNotEmpty()) {
+                            bubbles.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
+                            true
+                        } else false
+                        if (hasNew) "scramble" else null
+                    } catch (_: Exception) { null }
+                    finally { if (crop !== frame) crop.recycle() }
+                }
+            }
+            when (action) {
                 "end_rank" -> {
                     ctrl.clickFeature("end_rank")
                     delay(1500)
@@ -105,19 +124,11 @@ suspend fun rankSolve(ctrl: Controller): String? {
                     delay(1500)
                     return "scramble"
                 }
-            }
-            val feature = ctrl.recipe.feature("scramble_area")
-            val crop = if (feature != null && feature.roi != null) {
-                val r = feature.roi
-                Bitmap.createBitmap(frame, r.x, r.y, r.w, r.h)
-            } else frame
-            try {
-                val bubbles = BubbleSegmentor.segment(crop)
-                if (bubbles.isNotEmpty()) {
+                "scramble" -> {
                     ctrl.log("检测到新打乱")
                     return "scramble"
                 }
-            } catch (_: Exception) {}
+            }
             delay(500)
         }
         return "solve"
@@ -167,19 +178,24 @@ suspend fun semiSolve(ctrl: Controller): String? {
     val start = System.currentTimeMillis()
     while (System.currentTimeMillis() - start < 60_000L) {
         delay(1000)
-        val frame = ctrl.lastFrameBitmap() ?: continue
-        val feature = ctrl.recipe.feature("scramble_area")
-        val crop = if (feature != null && feature.roi != null) {
-            val r = feature.roi
-            Bitmap.createBitmap(frame, r.x, r.y, r.w, r.h)
-        } else frame
-        try {
-            val bubbles = BubbleSegmentor.segment(crop)
-            if (bubbles.isNotEmpty()) {
-                ctrl.log("semi/solve: 检测到打乱气泡，进入 scramble")
-                return "scramble"
-            }
-        } catch (_: Exception) {}
+        val detected = ctrl.useFrame { frame ->
+            val feature = ctrl.recipe.feature("scramble_area")
+            val crop = if (feature != null && feature.roi != null) {
+                val r = feature.roi
+                Bitmap.createBitmap(frame, r.x, r.y, r.w, r.h)
+            } else frame
+            try {
+                val bubbles = BubbleSegmentor.segment(crop)
+                val hasBubbles = bubbles.isNotEmpty()
+                bubbles.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
+                hasBubbles
+            } catch (_: Exception) { false }
+            finally { if (crop !== frame) crop.recycle() }
+        }
+        if (detected == true) {
+            ctrl.log("semi/solve: 检测到打乱气泡，进入 scramble")
+            return "scramble"
+        }
     }
     ctrl.log("semi/solve: 超时未检测到打乱，仍进入 scramble")
     return "scramble"

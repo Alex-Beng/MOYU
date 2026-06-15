@@ -126,6 +126,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startFloatLog() {
+        if (FloatLogService.instance != null && ScreenCaptureService.instance?.isProjectionRunning() == true) {
+            ready = true
+            return
+        }
         ready = true
         val intent = Intent(this, FloatLogService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)

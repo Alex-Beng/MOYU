@@ -279,9 +279,7 @@ class FloatLogService : Service() {
     private fun startThumbUpdater() {
         val r = object : Runnable {
             override fun run() {
-                val raw = ScreenCaptureService.instance?.lastFrame()?.bitmap
-                val bmp = if (raw != null && !raw.isRecycled) raw else null
-                if (bmp != null && !bmp.isRecycled) {
+                ScreenCaptureService.instance?.useFrame { bmp ->
                     val targetW = overlayView.width.takeIf { it > 0 } ?: 300
                     val targetH = targetW * bmp.height / bmp.width
                     val thumb = android.graphics.Bitmap.createScaledBitmap(bmp, targetW, targetH, false)
