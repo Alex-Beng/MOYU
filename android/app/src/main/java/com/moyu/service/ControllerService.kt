@@ -10,12 +10,14 @@ import kotlinx.coroutines.launch
 
 class ControllerService : LifecycleService() {
     private var controller: Controller? = null
+    private var controllerJob: kotlinx.coroutines.Job? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
 
         val recipePath = intent?.getStringExtra("recipe") ?: "rank.json"
 
+        controllerJob?.cancel()
         controller?.stop()
         controller = null
 
@@ -26,7 +28,7 @@ class ControllerService : LifecycleService() {
         controller = c
         FloatLogService.instance?.appendLog("Controller 构造完成")
         FloatLogService.instance?.bindController(c)
-        lifecycleScope.launch(Dispatchers.Default) { c.run() }
+        controllerJob = lifecycleScope.launch(Dispatchers.Default) { c.run() }
         lifecycleScope.launch(Dispatchers.Default) {
             while (controller === c) {
                 delay(600)
@@ -37,7 +39,8 @@ class ControllerService : LifecycleService() {
                     newController.state = restartState
                     controller = newController
                     FloatLogService.instance?.bindController(newController)
-                    launch(Dispatchers.Default) { newController.run() }
+                    controllerJob?.cancel()
+                    controllerJob = launch(Dispatchers.Default) { newController.run() }
                 }
             }
         }
@@ -45,6 +48,7 @@ class ControllerService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        controllerJob?.cancel()
         controller?.stop()
         super.onDestroy()
     }

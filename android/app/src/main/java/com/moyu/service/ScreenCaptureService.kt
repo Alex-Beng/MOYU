@@ -35,6 +35,7 @@ class ScreenCaptureService : Service() {
     private var captureThread: HandlerThread? = null
     private var captureHandler: Handler? = null
     @Volatile private var capturing = false
+    @Volatile private var projectionStopped = false
     private var recentFrame: Frame? = null
     private val frameLock = Any()
     private var recipeExtra: String? = null
@@ -76,7 +77,9 @@ class ScreenCaptureService : Service() {
             }
         }
         override fun onStop() {
-            FloatLogService.instance?.appendLog("MediaProjection 已停止")
+            FloatLogService.instance?.appendLog("MediaProjection 已停止，截屏终止")
+            projectionStopped = true
+            teardownCapture()
         }
     }
 
@@ -104,11 +107,17 @@ class ScreenCaptureService : Service() {
             val data = intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
             FloatLogService.instance?.appendLog("ScreenCapture resultCode=$resultCode data=${data != null}")
             if (resultCode == -1 && data != null) {
+                // Clean up old thread if restarting after MediaProjection stop
+                captureThread?.quitSafely()
+                captureThread = null
+                captureHandler = null
+
                 val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjection = mpm.getMediaProjection(resultCode, data)
                 captureThread = HandlerThread("capture").also { it.start() }
                 captureHandler = Handler(captureThread!!.looper)
                 mediaProjection!!.registerCallback(mediaProjectionCallback, captureHandler)
+                projectionStopped = false
                 setupCapture()
                 startController()
             }
@@ -206,6 +215,23 @@ class ScreenCaptureService : Service() {
             Frame(f.bitmap.copy(f.bitmap.config ?: Bitmap.Config.ARGB_8888, false), f.timestampMs)
         } catch (_: Exception) { null }
     }
+
+    fun <T> useFrame(action: (Bitmap) -> T): T? {
+        val copy = synchronized(frameLock) {
+            val f = recentFrame ?: return@useFrame null
+            if (f.bitmap.isRecycled) return@useFrame null
+            try {
+                f.bitmap.copy(f.bitmap.config ?: Bitmap.Config.ARGB_8888, false)
+            } catch (_: Exception) { null }
+        } ?: return null
+        return try {
+            action(copy)
+        } finally {
+            if (!copy.isRecycled) copy.recycle()
+        }
+    }
+
+    fun isProjectionRunning(): Boolean = capturing && !projectionStopped
 
     private fun startController() {
         FloatLogService.instance?.appendLog("正在启动控制器...")

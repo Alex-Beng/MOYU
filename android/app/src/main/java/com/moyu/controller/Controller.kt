@@ -147,25 +147,33 @@ class Controller(private val context: Context, recipePath: String = "rank.json")
         FloatLogService.instance?.appendLog(msg)
     }
 
+    fun <T> useFrame(action: (Bitmap) -> T): T? {
+        return ScreenCaptureService.instance?.useFrame(action)
+    }
+
     suspend fun waitForUi(featureName: String, timeoutMs: Long = 30_000L): DetectionResult? {
         val start = System.currentTimeMillis()
         var noFrameCount = 0
         while (running && System.currentTimeMillis() - start < timeoutMs) {
-            val frame = lastFrame()?.bitmap ?: run {
+            val result = useFrame { frame ->
+                detector.detect(frame, featureName)
+            }
+            if (result == null) {
                 noFrameCount++
                 if (noFrameCount % 5 == 1) log("waitForUi $featureName: 无帧 ×$noFrameCount")
-                delay(500); continue
+            } else {
+                noFrameCount = 0
+                if (result.matched) return result
             }
-            noFrameCount = 0
-            val result = detector.detect(frame, featureName)
-            if (result.matched) return result
             delay(500)
         }
         return null
     }
 
     suspend fun clickFeature(featureName: String): Boolean {
-        val result = detector.detect(lastFrame()?.bitmap ?: return false, featureName)
+        val result = useFrame { frame ->
+            detector.detect(frame, featureName)
+        } ?: return false
         if (!result.matched) return false
         val acc = com.moyu.service.MoyuAccessibilityService.instance
         if (acc == null) {
@@ -252,14 +260,5 @@ class Controller(private val context: Context, recipePath: String = "rank.json")
     internal val solver: CfopSolver get() = cfopSolver
     internal suspend fun clearMoves() {
         (cubeApi as? com.moyu.device.CubeApi)?.clearMoves()
-    }
-
-    internal fun lastFrameBitmap(): Bitmap? {
-        val svc = ScreenCaptureService.instance ?: return null
-        val frame = svc.lastFrame() ?: return null
-        if (frame.timestampMs < svc.captureStartTimeMs) return null
-        val bmp = frame.bitmap
-        if (bmp.isRecycled) return null
-        return bmp
     }
 }

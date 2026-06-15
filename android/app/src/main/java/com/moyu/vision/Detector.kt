@@ -65,6 +65,7 @@ class Detector(private val context: Context, private val recipe: RecipeConfig) {
         val templateMat = Mat()
         val resultMat = Mat()
         Utils.bitmapToMat(cropFrame, searchMat)
+        if (cropFrame !== frame) cropFrame.recycle()
         Utils.bitmapToMat(template, templateMat)
 
         Imgproc.matchTemplate(searchMat, templateMat, resultMat, Imgproc.TM_CCOEFF_NORMED)
