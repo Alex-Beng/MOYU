@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
+import java.nio.ByteBuffer
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
@@ -44,20 +45,37 @@ class ScreenCaptureService : Service() {
     var screenH = 0
         private set
     private var screenDpi = 0
+    private var contiguousBuf: ByteBuffer? = null
 
     private val imageListener = ImageReader.OnImageAvailableListener { reader ->
         if (!capturing) return@OnImageAvailableListener
         try {
             val image = reader.acquireLatestImage() ?: return@OnImageAvailableListener
+            if (!capturing) { image.close(); return@OnImageAvailableListener }
             val imgW = image.width
             val imgH = image.height
             val planes = image.planes
             val buffer = planes[0].buffer
             val pixelStride = planes[0].pixelStride
             val rowStride = planes[0].rowStride
-            val rowPadding = rowStride - pixelStride * imgW
-            val bmp = Bitmap.createBitmap(imgW + rowPadding / pixelStride, imgH, Bitmap.Config.ARGB_8888)
-            bmp.copyPixelsFromBuffer(buffer)
+            val bmp = Bitmap.createBitmap(imgW, imgH, Bitmap.Config.ARGB_8888)
+            val rowBytes = imgW * pixelStride
+            val totalBytes = rowBytes * imgH
+            val cont = contiguousBuf
+            if (cont == null || cont.capacity() < totalBytes) {
+                contiguousBuf = ByteBuffer.allocateDirect(totalBytes)
+            }
+            val buf = contiguousBuf!!
+            buf.rewind()
+            buffer.rewind()
+            for (y in 0 until imgH) {
+                buffer.position(y * rowStride)
+                val row = buffer.slice()
+                row.limit(rowBytes)
+                buf.put(row)
+            }
+            buf.rewind()
+            bmp.copyPixelsFromBuffer(buf)
             image.close()
             val newFrame = Frame(bmp, System.currentTimeMillis())
             val old = synchronized(frameLock) {
@@ -94,7 +112,16 @@ class ScreenCaptureService : Service() {
     override fun onDestroy() {
         instance = null
         teardownCapture()
+        captureHandler?.post {
+            virtualDisplay?.release()
+            virtualDisplay = null
+            imageReader?.close()
+            imageReader = null
+            contiguousBuf = null
+            synchronized(frameLock) { recentFrame = null }
+        }
         captureThread?.quitSafely()
+        captureThread?.join(500)
         mediaProjection?.stop()
         super.onDestroy()
     }
@@ -183,12 +210,13 @@ class ScreenCaptureService : Service() {
     private fun resizeCapture(w: Int, h: Int) {
         screenDpi = resources.displayMetrics.densityDpi
         try {
+            val oldReader = imageReader
             val newReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
             newReader.setOnImageAvailableListener(imageListener, captureHandler)
             virtualDisplay?.resize(w, h, screenDpi)
             virtualDisplay?.setSurface(newReader.surface)
-            imageReader?.close()
             imageReader = newReader
+            captureHandler?.post { oldReader?.close() }
             screenW = w
             screenH = h
             captureStartTime = System.currentTimeMillis()
@@ -200,12 +228,6 @@ class ScreenCaptureService : Service() {
 
     private fun teardownCapture() {
         capturing = false
-        Thread.sleep(50)
-        virtualDisplay?.release()
-        virtualDisplay = null
-        imageReader?.close()
-        imageReader = null
-        synchronized(frameLock) { recentFrame = null }
     }
 
     fun lastFrame(): Frame? = synchronized(frameLock) {
@@ -213,7 +235,7 @@ class ScreenCaptureService : Service() {
         if (f.bitmap.isRecycled) return null
         try {
             Frame(f.bitmap.copy(f.bitmap.config ?: Bitmap.Config.ARGB_8888, false), f.timestampMs)
-        } catch (_: Exception) { null }
+                                                                                                                                                                           } catch (_: Exception) { null }
     }
 
     fun <T> useFrame(action: (Bitmap) -> T): T? {

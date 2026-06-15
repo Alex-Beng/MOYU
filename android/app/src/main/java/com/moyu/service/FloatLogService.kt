@@ -241,7 +241,7 @@ class FloatLogService : Service() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val params = overlayView.layoutParams as WindowManager.LayoutParams
-                    params.x = initialX - (event.rawX - initialTouchX).toInt()
+                    params.x = initialX + (event.rawX - initialTouchX).toInt()
                     params.y = initialY + (event.rawY - initialTouchY).toInt()
                     wm.updateViewLayout(overlayView, params)
                     true
