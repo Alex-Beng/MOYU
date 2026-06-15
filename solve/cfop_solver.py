@@ -8,7 +8,7 @@ from solve.ALLL import EX_ALLLS
 DEBUG = False
 DEBUG = True
 
-ALLL_PROB = 0.4
+ALLL_PROB = 0.2
 
 XCROSS_ENABLED = True
 XCROSS_MAX_CROSS = 3

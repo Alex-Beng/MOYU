@@ -62,6 +62,7 @@ class Controller:
         self._last_move = None
         self._scramble_move_history: list[str] = []
         self._running = False
+        self._paused = False
         self._init_state()
         if initial_state is not None:
             self.state = initial_state
@@ -82,6 +83,24 @@ class Controller:
             self.state = "scramble"
         else:
             self.state = "wait_init"
+
+    # ------------------------------------------------------------------
+    # 暂停 / 继续
+    # ------------------------------------------------------------------
+
+    def pause(self):
+        """暂停状态机。"""
+        self._paused = True
+        logger.info("⏸ 已暂停")
+
+    def resume(self):
+        """继续状态机。"""
+        self._paused = False
+        logger.info("▶ 已继续")
+
+    @property
+    def is_paused(self):
+        return self._paused
 
     # ------------------------------------------------------------------
     # 入口
@@ -122,6 +141,8 @@ class Controller:
         """根据 mode 加载对应状态处理器。"""
         handlers = _get_handlers(self.mode)
         while True:
+            while self._paused:
+                await asyncio.sleep(0.5)
             if len(handlers) == 0:
                 await asyncio.sleep(1)
                 continue

@@ -10,6 +10,8 @@
     "cross_delay": 80,
     "f2l_delay": 100,
     "oll_delay": 80,
+    "oll_time": 300,
+    "alll_time":600,
     "rotation": "z",
     "ui": {
         "begin_holder": {
