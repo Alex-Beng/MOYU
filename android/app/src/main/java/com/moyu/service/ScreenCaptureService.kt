@@ -209,20 +209,24 @@ class ScreenCaptureService : Service() {
 
     private fun resizeCapture(w: Int, h: Int) {
         screenDpi = resources.displayMetrics.densityDpi
-        try {
-            val oldReader = imageReader
-            val newReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
-            newReader.setOnImageAvailableListener(imageListener, captureHandler)
-            virtualDisplay?.resize(w, h, screenDpi)
-            virtualDisplay?.setSurface(newReader.surface)
-            imageReader = newReader
-            captureHandler?.post { oldReader?.close() }
-            screenW = w
-            screenH = h
-            captureStartTime = System.currentTimeMillis()
-            FloatLogService.instance?.appendLog("截屏尺寸已调整为 ${w}x${h}")
-        } catch (e: Exception) {
-            FloatLogService.instance?.appendLog("截屏调整失败: ${e.message}")
+        val handler = captureHandler ?: return
+        handler.post {
+            try {
+                val oldReader = imageReader
+                val newReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+                newReader.setOnImageAvailableListener(imageListener, handler)
+                virtualDisplay?.resize(w, h, screenDpi)
+                virtualDisplay?.setSurface(newReader.surface)
+                imageReader = newReader
+                contiguousBuf = null
+                oldReader?.close()
+                screenW = w
+                screenH = h
+                captureStartTime = System.currentTimeMillis()
+                FloatLogService.instance?.appendLog("截屏尺寸已调整为 ${w}x${h}")
+            } catch (e: Exception) {
+                FloatLogService.instance?.appendLog("截屏调整失败: ${e.message}")
+            }
         }
     }
 
