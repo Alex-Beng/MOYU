@@ -38,7 +38,7 @@ suspend fun rankScramble(ctrl: Controller): String? {
         val labels = ctrl.classifier.predictBatch(bubbles.map { it.bitmap })
         bubbles.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
         val moves = MoveParser.parse(labels)
-        ctrl.log("OCR: labels=$labels moves=$moves")
+        ctrl.log("OCR: labels=${labels.joinToString { if (it == "EMPTY") "" else it }} moves=$moves")
         if (moves.isNotEmpty()) {
             ctrl.scrambleSeenMove = true
             ctrl.noScrambleCnt = 0
