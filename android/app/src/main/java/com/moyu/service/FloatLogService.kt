@@ -23,6 +23,11 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.moyu.controller.Controller
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -45,6 +50,8 @@ class FloatLogService : Service() {
     private lateinit var lblRestartState: TextView
     private lateinit var frameThumb: ImageView
     private lateinit var lastLogView: TextView
+    private lateinit var btnSendU: TextView
+    private val scope = CoroutineScope(Dispatchers.Default + Job())
     private val thumbHandler = Handler(Looper.getMainLooper())
     private var thumbRunnable: Runnable? = null
     private var isExpanded = false
@@ -70,6 +77,7 @@ class FloatLogService : Service() {
 
     override fun onDestroy() {
         instance = null
+        scope.cancel()
         thumbRunnable?.let { thumbHandler.removeCallbacks(it) }
         if (::overlayView.isInitialized) wm.removeView(overlayView)
         super.onDestroy()
@@ -181,6 +189,20 @@ class FloatLogService : Service() {
             }
         }
         controlBar.addView(btnRestart, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = 6 })
+
+        // ── Spacer to push U button right ──
+        controlBar.addView(android.view.View(this).apply { layoutParams = LinearLayout.LayoutParams(0, 0, 1f) })
+
+        btnSendU = makeBtn("U", 0xFF44AA44.toInt()).apply {
+            setOnClickListener {
+                val c = controller
+                if (c != null) {
+                    scope.launch { c.queueMoves("U") }
+                    appendLog("发送: U")
+                }
+            }
+        }
+        controlBar.addView(btnSendU, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = 6 })
 
         overlayView.addView(controlBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
