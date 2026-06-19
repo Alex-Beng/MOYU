@@ -49,12 +49,13 @@ class ScreenCaptureService : Service() {
 
     private val imageListener = ImageReader.OnImageAvailableListener { reader ->
         if (!capturing) return@OnImageAvailableListener
+        val image = reader.acquireLatestImage() ?: return@OnImageAvailableListener
+        if (!capturing) { image.close(); return@OnImageAvailableListener }
         try {
-            val image = reader.acquireLatestImage() ?: return@OnImageAvailableListener
-            if (!capturing) { image.close(); return@OnImageAvailableListener }
             val imgW = image.width
             val imgH = image.height
             val planes = image.planes
+            if (planes.isEmpty()) return@OnImageAvailableListener
             val buffer = planes[0].buffer
             val pixelStride = planes[0].pixelStride
             val rowStride = planes[0].rowStride
@@ -76,7 +77,6 @@ class ScreenCaptureService : Service() {
             }
             buf.rewind()
             bmp.copyPixelsFromBuffer(buf)
-            image.close()
             val newFrame = Frame(bmp, System.currentTimeMillis())
             val old = synchronized(frameLock) {
                 val prev = recentFrame?.bitmap
@@ -84,7 +84,10 @@ class ScreenCaptureService : Service() {
                 prev
             }
             if (old != null && !old.isRecycled) old.recycle()
-        } catch (_: Throwable) {}
+        } catch (_: Throwable) {
+        } finally {
+            image.close()
+        }
     }
 
     private val mediaProjectionCallback = object : MediaProjection.Callback() {
