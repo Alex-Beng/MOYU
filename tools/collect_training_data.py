@@ -14,7 +14,7 @@
   python -m tools.collect_training_data ocr --model ocr/cnn_model.onnx --host 192.168.50.246
 
   # UI 模板采集
-  python -m tools.collect_training_data ui --output recipe/recipes/templates/
+  python -m tools.collect_training_data ui --output templates/
 
   # 指定设备序列号
   python -m tools.collect_training_data ocr --serial 192.168.1.5:5555
