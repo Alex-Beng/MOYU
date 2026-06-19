@@ -1,0 +1,31 @@
+{
+    "name": "xiaomi 13 solo",
+    "mode": "solo",
+    "device": {
+        "width": 1080,
+        "height": 2400
+    },
+    "scramble_delay": 90,
+    "solve_delay": 90,
+    "cross_delay": 120,
+    "f2l_delay": 110,
+    "oll_delay": 90,
+    "alll_delay": 70,
+    "oll_time": 400,
+    "alll_time":500,
+    "rotation": "z",
+    "ui": {
+        "begin_solo": {
+            "template": "../../templates/begin_solo.png",
+            "roi": null,
+            "threshold": 0.85,
+            "desc": "开始日赛按钮"
+        },
+        "re_solo": {
+            "template": "../../templates/re_solo.png",
+            "roi": null,
+            "threshold": 0.85,
+            "desc": "再来一局按钮"
+        }
+    }
+}

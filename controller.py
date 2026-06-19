@@ -79,6 +79,8 @@ class Controller:
             self.state = "init"
         elif self.mode == "week":
             self.state = "init"
+        elif self.mode == "solo":
+            self.state = "init"
         elif self.mode == "remote":
             self.state = "scramble"
         else:
@@ -616,6 +618,121 @@ async def _rank_re_rank(self: Controller) -> str:
     return "re_rank"
 #endregion
 
+#region solo
+# ======================================================================
+# Solo 模式：日赛
+#   init → (持续点击 begin_solo，直到打乱出现) → scramble → solve → (re_solo → init / 新打乱 → scramble)
+# ======================================================================
+
+async def _solo_init(self: Controller) -> str:
+    """持续检测 begin_solo 并点击；当打乱气泡出现时跳转 scramble。"""
+    logger.info("solo/init: 持续检测 begin_solo，等待打乱出现...")
+    self._scramble_seen_move = False
+    self._no_scramble_cnt = 0
+    self._scramble_move_history = []
+
+    while True:
+        frame = self.scrcpy.last_frame
+        if frame is None:
+            await asyncio.sleep(0.5)
+            continue
+
+        feat = self.recipe.recipe.feature("scramble_area")
+        if feat and feat.roi:
+            x, y, w, h = feat.roi
+            crop = frame[y:y+h, x:x+w]
+        else:
+            mid = frame.shape[0] // 2
+            crop = frame[mid:, :]
+        chars = segment(crop)
+        if chars:
+            logger.info("solo/init: 检测到打乱气泡，跳转 scramble")
+            return "scramble"
+
+        matched, center = self.detector.detect(frame, "begin_solo")
+        if matched and center:
+            logger.info("solo/init: 点击 begin_solo")
+            self.scrcpy.tap(*center)
+
+        await asyncio.sleep(0.5)
+
+
+async def _solo_scramble(self: Controller) -> str:
+    """复用 rank scramble 逻辑。"""
+    return await _rank_scramble(self)
+
+
+async def _solo_solve(self: Controller) -> str:
+    """获取面片 → 求解 → 下发转动 → 检测 re_solo 或新打乱。"""
+    logger.info("solo/solve: 求解...")
+    facelets = await self.cube.get_facelets()
+    if not facelets or len(facelets) != 54:
+        logger.warning("solo/solve: facelets 无效 (len=%d)", len(facelets) if facelets else 0)
+        await asyncio.sleep(1.0)
+        return "solve"
+
+    try:
+        result = await self._do_solve(facelets)
+        solution = result["solution"]
+        logger.info("solo/solve: %s (%d步)", solution, len(solution.split()))
+        if self.recipe.recipe.cube == "pocket":
+            await self.move_queue.put(self._build_pocket_moves(result))
+        else:
+            await self.move_queue.put(self._build_phased_moves(result))
+    except Exception as e:
+        logger.error("solo/solve 失败: %s", e, exc_info=True)
+
+    self._scramble_seen_move = False
+    self._no_scramble_cnt = 0
+    self._last_move = None
+    self._scramble_move_history = []
+    logger.info("solo/solve: 检测 re_solo 或新打乱...")
+    elapsed = 0.0
+    while elapsed < 180.0:
+        frame = self.scrcpy.last_frame
+        if frame is None:
+            await asyncio.sleep(0.5)
+            elapsed += 0.5
+            continue
+
+        matched, center = self.detector.detect(frame, "re_solo")
+        if matched and center:
+            logger.info("solo/solve: 检测到 re_solo，点击后回到 init")
+            self.scrcpy.tap(*center)
+            await asyncio.sleep(2.0)
+            return "init"
+
+        feat = self.recipe.recipe.feature("scramble_area")
+        if feat and feat.roi:
+            x, y, w, h = feat.roi
+            crop = frame[y:y+h, x:x+w]
+        else:
+            mid = frame.shape[0] // 2
+            crop = frame[mid:, :]
+        chars = segment(crop)
+        if chars:
+            if self.classifier:
+                char_imgs = [c[0] for c in chars]
+                labels = self.classifier.predict_batch(char_imgs)
+                moves = parse(labels)
+                if moves:
+                    _dup = False
+                    for n in range(2, len(moves) + 1):
+                        if len(self._scramble_move_history) >= n and self._scramble_move_history[-n:] == moves:
+                            _dup = True
+                            break
+                    if _dup:
+                        await asyncio.sleep(0.5)
+                        elapsed += 0.5
+                        continue
+                    self._scramble_seen_move = True
+                    logger.info("solo/solve: 检测到新打乱，回到 scramble")
+                    return "scramble"
+        await asyncio.sleep(0.5)
+        elapsed += 0.5
+    return "solve"
+#endregion
+
 #region holder
 # ======================================================================
 # Holder 模式：擂台赛
@@ -1006,6 +1123,12 @@ def _get_handlers(mode: str) -> dict[str, any]:
             "scramble": _week_scramble,
             "solve": _week_solve,
             "re_week": _week_re_week,
+        }
+    if mode == "solo":
+        return {
+            "init": _solo_init,
+            "scramble": _solo_scramble,
+            "solve": _solo_solve,
         }
     if mode == "remote":
         return {
