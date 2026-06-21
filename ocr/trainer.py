@@ -326,6 +326,8 @@ def train_cnn(data_dir: str, model_output: str, epochs: int = 20, batch_size: in
         for batch_x, batch_y in loader:
             batch_x = batch_x.to(device)
             batch_y = batch_y.to(device)
+            factor = torch.empty(batch_x.size(0), 1, 1, 1, device=device).uniform_(0.5, 1.0)
+            batch_x = batch_x * factor
             optimizer.zero_grad()
             output = model(batch_x)
             loss = criterion(output, batch_y)

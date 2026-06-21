@@ -19,3 +19,4 @@ __pycache__
 /floatlog.txt
 error.log
 *.log
+crash.txt
