@@ -40,10 +40,11 @@ DEBUG = False
 class Controller:
     """主控制器 —— 编排各独立任务"""
 
-    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None, recipe_path: str | None = None, telnet_port: int | None = None):
+    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None, recipe_path: str | None = None, telnet_port: int | None = None, web_port: int = 8080):
         self.recipe = RecipeLoader(recipe_path) if recipe_path else RecipeLoader()
         self.scrcpy = ScrcpyClient(max_width=0, max_fps=10, bitrate=200_000_000)
         self._telnet_port = telnet_port
+        self._web_port = web_port
         self.cube = CubeAPI(single_step=single_step)
         self.detector = Detector(self.recipe.recipe)
 
@@ -62,8 +63,10 @@ class Controller:
         self._no_scramble_cnt = 0
         self._last_move = None
         self._scramble_move_history: list[str] = []
+        self._scramble_skip_cnt = 0
         self._running = False
         self._paused = False
+        self._start_time = time.monotonic()
         self._init_state()
         if initial_state is not None:
             self.state = initial_state
@@ -127,6 +130,11 @@ class Controller:
             telnet_task = asyncio.create_task(self._start_telnet(), name="telnet_server")
             tasks.append(telnet_task)
             logger.info(f"Telnet REPL 启动在端口 {self._telnet_port}")
+
+        if self._web_port > 0:
+            from web.frame_server import WebFrameServer
+            web_task = asyncio.create_task(WebFrameServer(self, port=self._web_port).start(), name="web_server")
+            tasks.append(web_task)
 
         logger.info("所有任务已启动")
         self._running = True
@@ -197,6 +205,7 @@ class Controller:
             self._drain_queue(self.move_queue)
             await self.cube.clear_moves()
             self._scramble_move_history = []
+            self._scramble_skip_cnt = 0
             if recipe.scramble_delay is not None:
                 await self.cube.set_delay(recipe.scramble_delay)
                 logger.debug("scramble_delay = %d ms", recipe.scramble_delay)
@@ -492,9 +501,16 @@ async def _rank_scramble(self: Controller) -> str:
                         _dup = True
                         break
                 if _dup:
-                    logger.debug(f"rank/scramble: {moves} vs {self._scramble_move_history} 跳过")
+                    self._scramble_skip_cnt += 1
+                    logger.debug(f"rank/scramble: {moves} vs {self._scramble_move_history} 跳过 ({self._scramble_skip_cnt}/5)")
+                    if self._scramble_skip_cnt >= 5:
+                        logger.info("rank/scramble: 连续跳过5次，清历史重新下发")
+                        self._scramble_skip_cnt = 0
+                        self._scramble_move_history = []
+                        self._last_move = None
                     await asyncio.sleep(0.5)
                     return "scramble"
+                self._scramble_skip_cnt = 0
                 self._scramble_move_history = moves
                 self._scramble_seen_move = True
                 self._no_scramble_cnt = 0
@@ -1189,7 +1205,8 @@ if __name__ == "__main__":
     parser.add_argument("--mock", action="store_true", help="Mock 测试")
     parser.add_argument("--single-step", action="store_true", help="逐步下发转动 (debug)")
     parser.add_argument("--state", default=None, help="指定初始状态 (覆盖 mode 默认值，如 scramble/solve/re_rank)")
-    parser.add_argument("--telnet", type=int, default=5555, metavar="PORT", help="启动 telnet REPL 服务器 (默认 5555，设为 0 禁用)")
+    parser.add_argument("--telnet", type=int, default=5556, metavar="PORT", help="启动 telnet REPL 服务器 (默认 5556，设为 0 禁用)")
+    parser.add_argument("--web-port", type=int, default=8080, metavar="PORT", help="Web 终端端口 (默认 8080，设为 0 关闭)")
     args = parser.parse_args()
 
     classifier_config = {"type": args.classifier}
@@ -1200,7 +1217,8 @@ if __name__ == "__main__":
             single_step=args.single_step,
             initial_state=args.state,
             recipe_path=args.recipe,
-            telnet_port=args.telnet
+            telnet_port=args.telnet,
+            web_port=args.web_port,
         )
         if args.mock:
             from device.cube_api import MockCubeAPI

@@ -28,6 +28,7 @@ class CubeLoop:
         self.cube_event_queue = cube_event_queue
         self.move_queue = move_queue
         self.tick_interval = tick_interval
+        self.current_moves: list | str | None = None
 
     async def run(self):
         """启动 move 消费任务。"""
@@ -44,6 +45,7 @@ class CubeLoop:
                 pass
 
             if moves is not None:
+                self.current_moves = moves
                 ok = await self._send_with_ack(moves)
                 if ok:
                     if isinstance(moves, list):
@@ -54,6 +56,7 @@ class CubeLoop:
                         logger.info("转动下发确认成功: %s", moves)
                 else:
                     logger.error("转动下发最终失败，丢弃: %s", moves)
+                self.current_moves = None
                 self.move_queue.task_done()
 
             await asyncio.sleep(self.tick_interval)

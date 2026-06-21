@@ -17,7 +17,7 @@ MOYU 是基于硬件模拟智能魔方，意图实现人类摸鱼（MOYU），�
 
 | 特性 | Python 版 | Android Kotlin 版 |
 |------|-----------|-------------------|
-| **运行模式** | rank / semi / holder / team / week / remote | rank / semi / holder / team / week / remote |
+| **运行模式** | rank / semi / holder / team / week / remote / solo | rank / semi / holder / team / week / remote |
 | **屏幕捕获** | scrcpy 客户端（USB/WiFi） | MediaProjection API（系统授权） |
 | **UI 点击** | scrcpy.tap() 注入 | MoyuAccessibilityService（无障碍服务） |
 | **分类器后端** | knn / template / cnn(ONNX) / hog_svm | 仅 cnn（TFLite） |
@@ -46,6 +46,7 @@ MOYU 是基于硬件模拟智能魔方，意图实现人类摸鱼（MOYU），�
 | **holder** | `init` → `scramble` → `solve` → `re_holder` → `init` |
 | **team** | `init` → `scramble` → `solve` → `re_team` → `scramble` |
 | **week** | `init` → `scramble` → `solve` → `re_week` → `init` |
+| **solo** | `init` → `scramble` → `solve` → `re_solo` → `init` |
 | **remote** | `scramble` → `solve`（循环等待下一把打乱） |
 
 ---
@@ -60,7 +61,8 @@ controller.py → asyncio.run(main())
                 ├─ create_task(_state_machine)    # 状态机驱动
                 ├─ create_task(ScreenLoop.run)     # 截图 + UI 检测
                 ├─ create_task(CubeLoop.run)       # 魔方状态轮询 + 转动下发
-                └─ create_task(_start_telnet)      # Telnet REPL 服务器（可选）
+                ├─ create_task(_start_telnet)      # Telnet REPL 服务器（可选）
+                └─ create_task(WebFrameServer)     # Web 终端（可选）
 ```
 
 ### 模块结构
@@ -90,6 +92,8 @@ moyu/
 │   ├── cube_api.py            # HTTP → ESP32
 │   ├── cube_loop.py           # 轮询 + 转动下发循环
 │   └── telnet.py              # Telnet REPL 服务器
+├── web/
+│   └── frame_server.py        # Web 终端（MJPEG 流 + 状态 + 远程点击）
 └── controller.py              # 入口 + 主控制器
 ```
 
@@ -147,9 +151,11 @@ moyu/
 ```bash
 python controller.py                              # 默认 example.json
 python controller.py --recipe rank.json           # 指定 recipe
+python controller.py --recipe solo.json           # Solo 模式
 python controller.py --classifier cnn             # 指定分类器
 python controller.py --state scramble             # 指定初始状态
-python controller.py --telnet 5555                # 启动 Telnet REPL（默认开启）
+python controller.py --telnet 5556                # 启动 Telnet REPL（默认 5556，0 关闭）
+python controller.py --web-port 8080              # Web 终端端口（默认 8080，0 关闭）
 python controller.py --single-step                # 逐步下发（调试）
 ```
 
@@ -191,7 +197,7 @@ python controller.py --single-step                # 逐步下发（调试）
 ### Telnet REPL
 
 ```bash
-telnet localhost 5555
+telnet localhost 5556
 ```
 
 连接后可访问：`controller`, `recipe`, `cube`, `scrcpy`, `detector`, `logger`

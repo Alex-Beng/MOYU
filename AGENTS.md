@@ -8,7 +8,7 @@
 ### 入口与执行
 - 入口：`python controller.py`（顶层模块，非包结构）
 - **无 requirements.txt** —— 依赖见 README：py-scrcpy-client, aiohttp, opencv-python, numpy, onnxruntime, torch（训练时可选）
-- Python 模块为**顶层目录**：`device/` `ocr/` `solve/` `vision/` `recipe/` `tools/`
+- Python 模块为**顶层目录**：`device/` `ocr/` `solve/` `vision/` `recipe/` `tools/` `web/`
 - 虚拟环境：`.venv/`（Python 3.10.6）
 
 ### 开发命令
@@ -18,7 +18,9 @@ python controller.py --mock --recipe rank.json                          # 离线
 python controller.py --single-step                                      # 逐步下发（调试用）
 python controller.py --state scramble                                   # 覆盖初始状态
 python controller.py --telnet 0                                         # 禁用 telnet REPL
-python controller.py --telnet 5555                                      # 启用 telnet（端口 5555）
+python controller.py --telnet 5556                                      # 启用 telnet（端口 5556）
+python controller.py --web-port 8080                                    # Web 终端（默认 8080，0=关闭）
+python controller.py --recipe solo.json                                 # Solo 模式
 python -m solve.solve 192.168.4.1 --method pocket_o --send              # CLI 求解器
 python -m solve.solve 192.168.4.1 --method cfop --send --rotation x     # CFOP + 预旋转
 python -m vision.matcher screen.png tmpl.png                            # 模板匹配测试
@@ -40,7 +42,7 @@ python test_pocket_advanced.py                                                  
 ```
 
 ### 配置文件
-- Recipe 配置：`recipe/recipes/*.json` —— 控制模式（rank/semi/holder/team/week/remote）、延迟、UI 模板、分类器
+- Recipe 配置：`recipe/recipes/*.json` —— 控制模式（rank/semi/holder/team/week/remote/solo）、延迟、UI 模板、分类器
 - 默认 Recipe：`recipe/recipes/example.json`
 - 分类器后端：`knn`（`.pkl`）、`template`（目录）、`cnn`（`.onnx`）、`hog_svm`（`.pkl`）
 
@@ -54,7 +56,7 @@ python test_pocket_advanced.py                                                  
 
 ### Telnet REPL
 ```bash
-telnet localhost 5555
+telnet localhost 5556
 # 暴露对象：controller, recipe, cube, scrcpy, detector, logger（支持 Tab 补全）
 ```
 
@@ -64,7 +66,8 @@ controller.py → asyncio.run(main())
   ├─ _state_machine   （状态机驱动）
   ├─ ScreenLoop.run   （截图 + UI 检测）
   ├─ CubeLoop.run     （魔方轮询 + 转动下发）
-  └─ _start_telnet    （Telnet REPL）
+  ├─ _start_telnet    （Telnet REPL）
+  └─ WebFrameServer   （Web 终端：画面 + 状态 + 远程点击）
 ```
 
 ## Android 版

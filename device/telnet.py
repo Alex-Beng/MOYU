@@ -2,8 +2,11 @@
 import copy
 import math
 import sys
+import logging
 from code import InteractiveConsole
 from io import StringIO
+
+logger = logging.getLogger(__name__)
 
 DONT     = bytes([254])
 DO       = bytes([253])
@@ -846,6 +849,8 @@ class AsyncTelnetServer:
                 break
             if not data:
                 break
+            if data.strip():
+                logger.info("[Telnet] data(len=%d): %r", len(data), data[:64])
             conn.raw_input(data)
             await _drain()
         print(f'[Telnet] disconnected: {addr}')
