@@ -179,10 +179,22 @@ class Controller:
     # 工具方法
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _drain_queue(q: asyncio.Queue):
+        """清空 asyncio.Queue 中所有残留项。"""
+        while not q.empty():
+            try:
+                q.get_nowait()
+                q.task_done()
+            except asyncio.QueueEmpty:
+                break
+
     async def _apply_delay(self):
         """根据当前状态设置 ESP32 转动延迟。"""
         recipe = self.recipe.recipe
         if self.state == "scramble":
+            self._drain_queue(self.move_queue)
+            await self.cube.clear_moves()
             self._scramble_move_history = []
             if recipe.scramble_delay is not None:
                 await self.cube.set_delay(recipe.scramble_delay)
