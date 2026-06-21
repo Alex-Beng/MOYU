@@ -14,6 +14,7 @@
 """
 import asyncio
 import logging
+import random
 import time
 from pathlib import Path
 from device.telnet import AsyncTelnetServer
@@ -963,9 +964,13 @@ async def _week_solve(self: Controller) -> str:
         solution = result["solution"]
         logger.info("week/solve: %s (%d步)", solution, len(solution.split()))
         if self.recipe.recipe.cube == "pocket":
-            await self.move_queue.put(self._build_pocket_moves(result))
+            moves = self._build_pocket_moves(result)
         else:
-            await self.move_queue.put(self._build_phased_moves(result))
+            moves = self._build_phased_moves(result)
+        delay = random.uniform(0, 5)
+        logger.info("week/solve: 随机延迟 %.1fs 后下发", delay)
+        await asyncio.sleep(delay)
+        await self.move_queue.put(moves)
     except Exception as e:
         logger.error("week/solve 失败: %s", e)
 
