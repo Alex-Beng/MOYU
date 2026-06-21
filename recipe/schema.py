@@ -83,6 +83,7 @@ class Recipe:
     pll_time: int | None = None
     alll_time: int | None = None
     rotation: str | None = None
+    alll_prob: float = 0.2
     move_format: str = "dir"  # "dir" = face/dir, "str" = move string
     ui: dict[str, UIFeature] = field(default_factory=dict)
     base_dir: Path = field(default_factory=Path)
@@ -102,6 +103,7 @@ class Recipe:
             oll_time=d.get("oll_time"), pll_time=d.get("pll_time"),
             alll_time=d.get("alll_time"),
             move_format=d.get("move_format", "dir"),
+            alll_prob=d.get("alll_prob", 0.2),
             ui=ui, base_dir=base_dir,
         )
 

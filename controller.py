@@ -306,7 +306,7 @@ class Controller:
         if recipe.cube == "pocket":
             return solve_pocket(facelets, method=recipe.solve_method)
         else:
-            return solve_cfop(facelets, rotation=recipe.rotation)
+            return solve_cfop(facelets, rotation=recipe.rotation, alll_prob=recipe.alll_prob)
 
     async def _wait_for_ui(self, feature_name: str, timeout: float = 30.0) -> tuple[bool, any, any]:
         """轮询检测 UI 特征直到出现或超时。"""
@@ -346,6 +346,31 @@ class Controller:
             self.scrcpy.tap(*center)
             return True
         return False
+
+    def set_state(self, state: str):
+        """运行时强制跳转状态（Web 终端 / Telnet 调用）。"""
+        if state not in _get_handlers(self.mode):
+            logger.warning("当前 mode=%s 不支持状态: %s", self.mode, state)
+            return
+        self.state = state
+        self._scramble_seen_move = False
+        self._no_scramble_cnt = 0
+        self._scramble_move_history = []
+        logger.info("状态已强制跳转: %s", state)
+
+    async def switch_recipe(self, path: str, state: str | None = None):
+        """运行时切换 recipe 并可选跳转状态。"""
+        self.recipe.switch(path)
+        self.mode = self.recipe.recipe.mode
+        self.detector = Detector(self.recipe.recipe)
+        self._drain_queue(self.move_queue)
+        await self.cube.clear_moves()
+        if self.classifier_config:
+            self.classifier = create_classifier(self.classifier_config)
+        self._init_state()
+        if state is not None:
+            self.state = state
+        logger.info("recipe 已切换: %s, mode=%s, state=%s", path, self.mode, self.state)
 
 
 #region semi

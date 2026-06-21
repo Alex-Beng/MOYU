@@ -45,3 +45,8 @@ class RecipeLoader:
     def reload(self):
         """热重载 recipe（文件变更后调用）。"""
         self.load()
+
+    def switch(self, path: str | Path):
+        """运行时切换到另一个 recipe 文件。"""
+        self.path = RECIPES_DIR / Path(path)
+        self.load()

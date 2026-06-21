@@ -20,20 +20,34 @@ _PAGE = """\
 body { background:#000; font-family:monospace; }
 #status {
   position:fixed; top:12px; left:12px; z-index:10;
-  background:rgba(0,0,0,0.75); color:#0f0; padding:10px 16px;
+  background:rgba(0,0,0,0.85); color:#0f0; padding:10px 16px;
   border-radius:6px; font-size:14px; line-height:1.6;
-  min-width:200px; pointer-events:none;
+  min-width:220px; pointer-events:none;
 }
 #status .row { display:flex; }
 #status .label { color:#888; width:60px; flex-shrink:0; }
 #status .value { color:#0f0; }
-#click-toggle {
-  margin-top:8px; padding:4px 12px; border-radius:4px;
+.ctrl-toggle {
+  margin-top:6px; padding:3px 12px; border-radius:4px;
   font-size:13px; cursor:pointer; text-align:center;
   pointer-events:auto; user-select:none;
 }
-#click-toggle.on  { background:#0f0; color:#000; }
-#click-toggle.off { background:#555; color:#aaa; }
+.ctrl-toggle.on  { background:#0f0; color:#000; }
+.ctrl-toggle.off { background:#555; color:#aaa; }
+#panel {
+  display:none; margin-top:6px; pointer-events:auto;
+  border-top:1px solid #444; padding-top:6px;
+}
+.ctrl-row { display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+.ctrl-row select {
+  flex:1; background:#333; color:#0f0; border:1px solid #555;
+  border-radius:3px; padding:3px 6px; font-size:13px; font-family:monospace;
+}
+.ctrl-row button {
+  background:#0a0; color:#000; border:none; border-radius:3px;
+  padding:4px 10px; font-size:13px; cursor:pointer; font-family:monospace;
+}
+.ctrl-row button:hover { background:#0f0; }
 #stream { width:100%; height:100vh; object-fit:contain; cursor:crosshair; }
 #click-feedback {
   position:fixed; z-index:20; pointer-events:none;
@@ -53,7 +67,21 @@ body { background:#000; font-family:monospace; }
   <div class="row"><span class="label">state</span><span class="value" id="v-state">-</span></div>
   <div class="row"><span class="label">moves</span><span class="value" id="v-moves">-</span></div>
   <div class="row"><span class="label">uptime</span><span class="value" id="v-uptime">-</span></div>
-  <div id="click-toggle" class="on">点击关闭</div>
+  <div class="ctrl-toggle on" id="panel-toggle">🔧 控制面板</div>
+  <div id="panel">
+    <div class="ctrl-row">
+      <select id="recipe-select"></select>
+      <button id="recipe-switch">切换</button>
+    </div>
+    <div class="ctrl-row">
+      <select id="state-select">
+        <option>init</option><option>scramble</option><option>solve</option>
+        <option>re_rank</option><option>re_holder</option><option>re_team</option><option>re_week</option>
+      </select>
+      <button id="state-set">跳转</button>
+    </div>
+  </div>
+  <div class="ctrl-toggle on" id="click-toggle">点击关闭</div>
 </div>
 <div id="click-feedback"></div>
 <img id="stream" src="/stream">
@@ -61,11 +89,19 @@ body { background:#000; font-family:monospace; }
 const img = document.getElementById('stream');
 const fb = document.getElementById('click-feedback');
 const toggle = document.getElementById('click-toggle');
+const panelToggle = document.getElementById('panel-toggle');
+const panel = document.getElementById('panel');
 let clickEnabled = true;
+
+panelToggle.addEventListener('click', function() {
+  const show = panel.style.display !== 'block';
+  panel.style.display = show ? 'block' : 'none';
+  this.className = show ? 'ctrl-toggle on' : 'ctrl-toggle off';
+});
 
 toggle.addEventListener('click', function() {
   clickEnabled = !clickEnabled;
-  this.className = clickEnabled ? 'on' : 'off';
+  this.className = clickEnabled ? 'ctrl-toggle on' : 'ctrl-toggle off';
   this.textContent = clickEnabled ? '点击关闭' : '点击开启';
   img.style.cursor = clickEnabled ? 'crosshair' : 'default';
 });
@@ -91,6 +127,33 @@ img.addEventListener('click', async function(e) {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({x:imgX, y:imgY})
     });
+  } catch(e) {}
+});
+
+async function loadRecipes() {
+  try {
+    const r = await fetch('/api/recipes');
+    const list = await r.json();
+    const sel = document.getElementById('recipe-select');
+    list.forEach(f => { const o = document.createElement('option'); o.value = f; o.textContent = f; sel.appendChild(o); });
+  } catch(e) {}
+}
+loadRecipes();
+
+document.getElementById('recipe-switch').addEventListener('click', async function() {
+  const path = document.getElementById('recipe-select').value;
+  const state = document.getElementById('state-select').value;
+  if (!path) return;
+  try {
+    await fetch('/api/recipe', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path, state}) });
+  } catch(e) {}
+});
+
+document.getElementById('state-set').addEventListener('click', async function() {
+  const state = document.getElementById('state-select').value;
+  if (!state) return;
+  try {
+    await fetch('/api/state', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({state}) });
   } catch(e) {}
 });
 
@@ -132,6 +195,9 @@ class WebFrameServer:
         app.router.add_get("/frame", self._handle_frame)
         app.router.add_get("/api/status", self._handle_status)
         app.router.add_post("/api/click", self._handle_click)
+        app.router.add_get("/api/recipes", self._handle_list_recipes)
+        app.router.add_post("/api/recipe", self._handle_switch_recipe)
+        app.router.add_post("/api/state", self._handle_set_state)
         runner = web.AppRunner(app)
         await runner.setup()
         await web.TCPSite(runner, self.host, self.port).start()
@@ -204,3 +270,27 @@ class WebFrameServer:
         logger.info("Web 远程点击 (%d, %d)", x, y)
         self.controller.scrcpy.tap(x, y)
         return web.Response(text="ok")
+
+    async def _handle_list_recipes(self, request):
+        from recipe.loader import RECIPES_DIR
+        files = sorted(f.name for f in RECIPES_DIR.iterdir() if f.suffix == ".json")
+        return web.json_response(files)
+
+    async def _handle_switch_recipe(self, request):
+        data = await request.json()
+        path = data.get("path")
+        state = data.get("state")
+        if not path:
+            return web.json_response({"error": "missing path"}, status=400)
+        logger.info("Web 切换 recipe: %s", path)
+        await self.controller.switch_recipe(path, state)
+        return web.json_response({"ok": True})
+
+    async def _handle_set_state(self, request):
+        data = await request.json()
+        state = data.get("state")
+        if not state:
+            return web.json_response({"error": "missing state"}, status=400)
+        logger.info("Web 跳转状态: %s", state)
+        self.controller.set_state(state)
+        return web.json_response({"ok": True})

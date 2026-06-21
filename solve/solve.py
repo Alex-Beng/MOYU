@@ -69,13 +69,15 @@ def kociemba_to_rubik_cube(k_facelets):
     cross[45:54] = d
     return ''.join(COLOR_MAP[c] for c in cross)
 
-def solve_cfop(facelets, debug=False, rotation=None):
+def solve_cfop(facelets, debug=False, rotation=None, alll_prob=None):
     try:
         from solve import cfop_solver
         from solve.cfop_solver import CFOPSolver
     except ImportError:
         raise RuntimeError("cfop_solver.py not found in solve/")
     cfop_solver.DEBUG = debug
+    if alll_prob is not None:
+        cfop_solver.ALLL_PROB = alll_prob
     solver = CFOPSolver()
     result = solver.solve(facelets, pre_rotation=rotation)
     if result is None:
