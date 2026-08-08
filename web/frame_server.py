@@ -67,6 +67,8 @@ body { background:#000; font-family:monospace; }
   <div class="row"><span class="label">state</span><span class="value" id="v-state">-</span></div>
   <div class="row"><span class="label">moves</span><span class="value" id="v-moves">-</span></div>
   <div class="row"><span class="label">uptime</span><span class="value" id="v-uptime">-</span></div>
+  <div class="row"><span class="label">solve</span><span class="value" id="v-solve">-</span></div>
+  <div class="ctrl-toggle on" id="pause-toggle">⏸ 暂停</div>
   <div class="ctrl-toggle on" id="panel-toggle">🔧 控制面板</div>
   <div id="panel">
     <div class="ctrl-row">
@@ -91,6 +93,7 @@ const fb = document.getElementById('click-feedback');
 const toggle = document.getElementById('click-toggle');
 const panelToggle = document.getElementById('panel-toggle');
 const panel = document.getElementById('panel');
+const pauseToggle = document.getElementById('pause-toggle');
 let clickEnabled = true;
 
 panelToggle.addEventListener('click', function() {
@@ -104,6 +107,20 @@ toggle.addEventListener('click', function() {
   this.className = clickEnabled ? 'ctrl-toggle on' : 'ctrl-toggle off';
   this.textContent = clickEnabled ? '点击关闭' : '点击开启';
   img.style.cursor = clickEnabled ? 'crosshair' : 'default';
+});
+
+pauseToggle.addEventListener('click', async function() {
+  const paused = this.dataset.paused === 'true';
+  try {
+    const r = await fetch('/api/pause', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({paused: !paused})
+    });
+    const d = await r.json();
+    this.dataset.paused = d.paused;
+    this.className = d.paused ? 'ctrl-toggle off' : 'ctrl-toggle on';
+    this.textContent = d.paused ? '▶ 继续' : '⏸ 暂停';
+  } catch(e) {}
 });
 
 img.addEventListener('click', async function(e) {
@@ -167,6 +184,11 @@ async function poll() {
     const t = Math.round(d.uptime);
     const pad = n => String(n).padStart(2,'0');
     document.getElementById('v-uptime').textContent = pad(Math.floor(t/3600)) + ':' + pad(Math.floor((t%3600)/60)) + ':' + pad(t%60);
+    const s = d.solve_count, m = d.max_solves;
+    document.getElementById('v-solve').textContent = m > 0 ? s + '/' + m : s;
+    pauseToggle.dataset.paused = d.paused;
+    pauseToggle.className = d.paused ? 'ctrl-toggle off' : 'ctrl-toggle on';
+    pauseToggle.textContent = d.paused ? '▶ 继续' : '⏸ 暂停';
   } catch(e) {}
 }
 setInterval(poll, 500); poll();
@@ -198,7 +220,8 @@ class WebFrameServer:
         app.router.add_get("/api/recipes", self._handle_list_recipes)
         app.router.add_post("/api/recipe", self._handle_switch_recipe)
         app.router.add_post("/api/state", self._handle_set_state)
-        runner = web.AppRunner(app)
+        app.router.add_post("/api/pause", self._handle_pause)
+        runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         await web.TCPSite(runner, self.host, self.port).start()
         logger.info("Web 终端 http://%s:%d", self.host, self.port)
@@ -261,6 +284,9 @@ class WebFrameServer:
                 "current_moves": moves_str,
                 "queue_pending": cl.move_queue.qsize(),
                 "uptime": time.monotonic() - self.controller._start_time,
+                "solve_count": self.controller._solve_count,
+                "max_solves": self.controller._max_solves,
+                "paused": self.controller._paused,
             }),
         )
 
@@ -294,3 +320,15 @@ class WebFrameServer:
         logger.info("Web 跳转状态: %s", state)
         self.controller.set_state(state)
         return web.json_response({"ok": True})
+
+    async def _handle_pause(self, request):
+        data = await request.json()
+        paused = data.get("paused")
+        if paused is None:
+            paused = not self.controller.is_paused
+        if paused:
+            self.controller.pause()
+        else:
+            self.controller.resume()
+        logger.info("Web 暂停状态: %s", paused)
+        return web.json_response({"paused": paused})
