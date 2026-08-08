@@ -6,12 +6,15 @@
         "height": 2400
     },
     "scramble_delay": 90,
+    "solve_delay": 90,
     "cross_delay": 120,
-    "f2l_delay": 120,
-    "oll_delay": 90,
-    "alll_delay": 80,
-    "oll_time": 300,
-    "alll_time":600,
+    "f2l_delay": 110,
+    "oll_delay": 80,
+    "alll_delay": 60,
+    "f2l_time": 500,
+    "oll_time": 500,
+    "pll_time": 600,
+    "alll_time":1000,
     "rotation": "z",
     "ui": {
         "begin_team": {
