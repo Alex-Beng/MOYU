@@ -3,6 +3,7 @@
 基于 https://github.com/leng-yue/py-scrcpy-client
 """
 import logging
+import time
 
 import cv2
 import numpy as np
@@ -44,27 +45,51 @@ class ScrcpyClient:
         if self.bitrate is not None:
             kwargs["bitrate"] = self.bitrate
         self._client = scrcpy.Client(**kwargs)
-        # 注册帧回调（可选，主要用于调试可视化）
         self._client.add_listener(scrcpy.EVENT_FRAME, self._on_frame)
         self._client.add_listener(scrcpy.EVENT_INIT, self._on_init)
-        # threaded=True：帧循环在独立线程，不阻塞主线程
+        self._client.add_listener(scrcpy.EVENT_DISCONNECT, self._on_disconnect)
         self._client.start(threaded=True)
         self._connected = True
         logger.info("ScrcpyClient 已连接")
+
+    def reconnect(self, max_retries: int = 3, delay: float = 2.0) -> bool:
+        """断开并重新连接 scrcpy。
+
+        Args:
+            max_retries: 最大重试次数。
+            delay: 每次重试间隔（秒）。
+
+        Returns:
+            是否重连成功。
+        """
+        self.disconnect()
+        for attempt in range(1, max_retries + 1):
+            logger.info("ScrcpyClient 重连尝试 %d/%d...", attempt, max_retries)
+            try:
+                self.connect()
+                return True
+            except Exception as e:
+                logger.warning("ScrcpyClient 重连失败 (%s)，%d 秒后重试", e, delay)
+                time.sleep(delay)
+        logger.error("ScrcpyClient 重连耗尽 %d 次，放弃", max_retries)
+        return False
 
     def _on_init(self):
         logger.info("scrcpy 初始化完成，设备: %s", self._client.device_name)
 
     def _on_frame(self, frame):
-        # 帧回调不做处理，通过 last_frame 获取即可
         pass
+
+    def _on_disconnect(self):
+        self._connected = False
+        logger.warning("scrcpy 连接断开")
 
     def disconnect(self):
         """断开 scrcpy 连接。"""
         if self._client:
             self._client.stop()
-            self._connected = False
-            logger.info("ScrcpyClient 已断开")
+        self._connected = False
+        logger.info("ScrcpyClient 已断开")
 
     @property
     def connected(self) -> bool:
@@ -79,7 +104,7 @@ class ScrcpyClient:
 
     def tap(self, x: int, y: int):
         """点击屏幕坐标 (x, y)。"""
-        if not self._connected:
+        if not self._connected or not self._client:
             logger.warning("scrcpy 未连接，忽略 tap")
             return
         logger.debug("tap (%d, %d)", x, y)
@@ -88,7 +113,7 @@ class ScrcpyClient:
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300):
         """从 (x1, y1) 滑动到 (x2, y2)。"""
-        if not self._connected:
+        if not self._connected or not self._client:
             logger.warning("scrcpy 未连接，忽略 swipe")
             return
         logger.debug("swipe (%d,%d) → (%d,%d)", x1, y1, x2, y2)
