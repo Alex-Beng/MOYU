@@ -4,7 +4,7 @@ adb logcat -d | findstr /i "FATAL AndroidRuntime moyu"
                                                                                                          
 或者更完整（获取崩溃前后的日志）：                                                                       
                                                                                                          
-adb logcat *:E -d | findstr /i "moyu"                                                                    
+adb logcat *:E -d | findstr /i "moyu"
 
 adb logcat -d | findstr /i "AndroidRuntime FATAL moyu"                                                   
 
