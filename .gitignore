@@ -20,3 +20,4 @@ __pycache__
 error.log
 *.log
 crash.txt
+.opencode
