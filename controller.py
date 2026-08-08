@@ -562,6 +562,18 @@ async def _rank_scramble(self: Controller) -> str:
             else:
                 self._no_scramble_cnt += 1
                 logger.debug("rank/scramble: 分类=%s (无有效转动)", labels)
+
+                # 保底：可能退回到初始界面（begin_rank）——10个空气泡界面
+                matched_bg, center_bg = self.detector.detect(frame, "begin_rank")
+                if matched_bg and center_bg:
+                    logger.info("rank/scramble: 检测到 begin_rank（退回初始界面），点击后重新等待")
+                    self.scrcpy.tap(*center_bg)
+                    await asyncio.sleep(2.0)
+                    self._scramble_move_history = []
+                    self._scramble_seen_move = False
+                    self._no_scramble_cnt = 0
+                    return "scramble"
+
                 if self._scramble_seen_move and not moves and self._no_scramble_cnt > 1:
                     logger.info("rank/scramble: 无有效转动且持续多帧，可能打乱结束，进入 solve")
                     self._scramble_seen_move = False
