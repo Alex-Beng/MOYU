@@ -15,6 +15,7 @@
 import asyncio
 import logging
 import random
+import subprocess
 import time
 from pathlib import Path
 from device.telnet import AsyncTelnetServer
@@ -40,7 +41,7 @@ DEBUG = False
 class Controller:
     """主控制器 —— 编排各独立任务"""
 
-    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None, recipe_path: str | None = None, telnet_port: int | None = None, web_port: int = 8080):
+    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None, recipe_path: str | None = None, telnet_port: int | None = None, web_port: int = 8080, max_solves: int = 0):
         self.recipe = RecipeLoader(recipe_path) if recipe_path else RecipeLoader()
         self.scrcpy = ScrcpyClient(max_width=0, max_fps=10, bitrate=200_000_000)
         self._telnet_port = telnet_port
@@ -67,6 +68,9 @@ class Controller:
         self._running = False
         self._paused = False
         self._start_time = time.monotonic()
+        self._max_solves = max_solves
+        self._solve_count = 0
+        self._tasks = None
         self._init_state()
         if initial_state is not None:
             self.state = initial_state
@@ -125,6 +129,7 @@ class Controller:
             asyncio.create_task(self.screen_loop.run(), name="screen_loop"),
             asyncio.create_task(self.cube_loop.run(), name="cube_loop"),
         ]
+        self._tasks = tasks
 
         if self._telnet_port:
             telnet_task = asyncio.create_task(self._start_telnet(), name="telnet_server")
@@ -139,7 +144,7 @@ class Controller:
         logger.info("所有任务已启动")
         self._running = True
         try:
-            await asyncio.gather(*tasks)
+            await asyncio.gather(*tasks, return_exceptions=True)
         finally:
             self.scrcpy.disconnect()
             await self.cube.close()
@@ -161,9 +166,20 @@ class Controller:
             if handler:
                 next_state = await handler(self)
                 if next_state and next_state != self.state:
+                    prev_state = self.state
+                    if next_state == "solve":
+                        self._solve_count += 1
+                        logger.info("solve 次数: %d/%d", self._solve_count, self._max_solves or 0)
                     logger.info("状态转移: %s -> %s", self.state, next_state)
                     self.state = next_state
                     await self._apply_delay()
+                    if self._max_solves > 0 and prev_state == "solve" and self._solve_count >= self._max_solves:
+                        logger.info("已完成 %d 次 solve，达到目标次数，锁屏退出", self._max_solves)
+                        subprocess.run(["adb", "shell", "input", "keyevent", "26"], capture_output=True)
+                        for task in self._tasks:
+                            if not task.done():
+                                task.cancel()
+                        return
             else:
                 logger.warning("未知状态: %s (mode=%s)", self.state, self.mode)
                 await asyncio.sleep(1)
@@ -1232,6 +1248,7 @@ if __name__ == "__main__":
     parser.add_argument("--state", default=None, help="指定初始状态 (覆盖 mode 默认值，如 scramble/solve/re_rank)")
     parser.add_argument("--telnet", type=int, default=5556, metavar="PORT", help="启动 telnet REPL 服务器 (默认 5556，设为 0 禁用)")
     parser.add_argument("--web-port", type=int, default=8080, metavar="PORT", help="Web 终端端口 (默认 8080，设为 0 关闭)")
+    parser.add_argument("--max-solves", type=int, default=0, metavar="N", help="达到 N 次 solve 后自动锁屏退出 (0=不限制)")
     args = parser.parse_args()
 
     classifier_config = {"type": args.classifier}
@@ -1244,6 +1261,7 @@ if __name__ == "__main__":
             recipe_path=args.recipe,
             telnet_port=args.telnet,
             web_port=args.web_port,
+            max_solves=args.max_solves,
         )
         if args.mock:
             from device.cube_api import MockCubeAPI
