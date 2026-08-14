@@ -38,28 +38,33 @@ class CubeLoop:
     async def _move_loop(self):
         """Tick 循环：检查 queue → 下发 + 回包确认 → 重试或丢弃。"""
         while True:
-            moves = None
             try:
-                moves = self.move_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                pass
+                moves = None
+                try:
+                    moves = self.move_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
 
-            if moves is not None:
-                self.current_moves = moves
-                ok = await self._send_with_ack(moves)
-                if ok:
-                    if isinstance(moves, list):
-                        n_moves = sum(1 for s in moves if "face" in s or "move" in s)
-                        n_delays = sum(1 for s in moves if "delay" in s)
-                        logger.info("转动下发确认成功: %d moves + %d delays", n_moves, n_delays)
+                if moves is not None:
+                    self.current_moves = moves
+                    ok = await self._send_with_ack(moves)
+                    if ok:
+                        if isinstance(moves, list):
+                            n_moves = sum(1 for s in moves if "face" in s or "move" in s)
+                            n_delays = sum(1 for s in moves if "delay" in s)
+                            logger.info("转动下发确认成功: %d moves + %d delays", n_moves, n_delays)
+                        else:
+                            logger.info("转动下发确认成功: %s", moves)
                     else:
-                        logger.info("转动下发确认成功: %s", moves)
-                else:
-                    logger.error("转动下发最终失败，丢弃: %s", moves)
-                self.current_moves = None
-                self.move_queue.task_done()
+                        logger.error("转动下发最终失败，丢弃: %s", moves)
+                    self.current_moves = None
+                    self.move_queue.task_done()
 
-            await asyncio.sleep(self.tick_interval)
+                await asyncio.sleep(self.tick_interval)
+            except Exception as e:
+                logger.exception("CubeLoop 异常，继续运行: %s", e)
+                self.current_moves = None
+                await asyncio.sleep(1)
 
     async def _send_with_ack(self, moves, max_retries=3) -> bool:
         """下发 + 回包确认，指数退避重试。"""

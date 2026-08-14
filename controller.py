@@ -71,6 +71,7 @@ class Controller:
         self._max_solves = max_solves
         self._solve_count = 0
         self._tasks = None
+        self._state_version = 0
         self._init_state()
         if initial_state is not None:
             self.state = initial_state
@@ -164,7 +165,11 @@ class Controller:
                 continue
             handler = handlers.get(self.state)
             if handler:
+                version = self._state_version
                 next_state = await handler(self)
+                if version != self._state_version:
+                    logger.debug("状态已在 handler 执行期间被外部修改，跳过本次转移")
+                    continue
                 if next_state and next_state != self.state:
                     prev_state = self.state
                     if next_state == "solve":
@@ -369,6 +374,7 @@ class Controller:
             logger.warning("当前 mode=%s 不支持状态: %s", self.mode, state)
             return
         self.state = state
+        self._state_version += 1
         self._scramble_seen_move = False
         self._no_scramble_cnt = 0
         self._scramble_move_history = []
@@ -705,9 +711,11 @@ async def _rank_re_rank(self: Controller) -> str:
         logger.info("rank/re_rank: 超时， 可能被踢回begin界面了")
         ok, _, center = await self._wait_for_ui("begin_rank", timeout=5.0)
         if ok and center:
-            logger.info("rank/re_rank: 检测到 begin_rank，点击")
+            logger.info("rank/re_rank: 检测到 begin_rank，点击后进入 scramble")
             self.scrcpy.tap(*center)
             await asyncio.sleep(2.0)
+            self._scramble_move_history = []
+            return "scramble"
     return "re_rank"
 #endregion
 
