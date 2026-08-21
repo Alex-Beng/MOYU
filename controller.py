@@ -41,11 +41,12 @@ DEBUG = False
 class Controller:
     """主控制器 —— 编排各独立任务"""
 
-    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None, recipe_path: str | None = None, telnet_port: int | None = None, web_port: int = 8080, max_solves: int = 0):
+    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None, recipe_path: str | None = None, telnet_port: int | None = None, web_port: int = 8080, max_solves: int = 0, proxy_mode: bool = False):
         self.recipe = RecipeLoader(recipe_path) if recipe_path else RecipeLoader()
         self.scrcpy = ScrcpyClient(max_width=0, max_fps=10, bitrate=200_000_000)
         self._telnet_port = telnet_port
         self._web_port = web_port
+        self._proxy_mode = proxy_mode
         self.cube = CubeAPI(single_step=single_step)
         self.detector = Detector(self.recipe.recipe)
 
@@ -92,6 +93,8 @@ class Controller:
             self.state = "init"
         elif self.mode == "remote":
             self.state = "scramble"
+        elif self.mode == "proxy":
+            self.state = "record"
         else:
             self.state = "wait_init"
 
@@ -141,6 +144,12 @@ class Controller:
             from web.frame_server import WebFrameServer
             web_task = asyncio.create_task(WebFrameServer(self, port=self._web_port).start(), name="web_server")
             tasks.append(web_task)
+
+        if self._proxy_mode:
+            from device.proxy_loop import ProxyLoop
+            proxy_task = asyncio.create_task(ProxyLoop(self.move_queue, cube_api=self.cube).run(), name="proxy_loop")
+            tasks.append(proxy_task)
+            logger.info("ProxyLoop 已启动（BLE 监听真实魔方）")
 
         logger.info("所有任务已启动")
         self._running = True
@@ -208,6 +217,12 @@ class Controller:
     # ------------------------------------------------------------------
     # 工具方法
     # ------------------------------------------------------------------
+
+    async def _send_moves(self, moves):
+        if self._proxy_mode:
+            logger.debug("proxy 模式: 跳过自动下发，等待 BLE 输入")
+            return
+        await self.move_queue.put(moves)
 
     @staticmethod
     def _drain_queue(q: asyncio.Queue):
@@ -435,7 +450,7 @@ async def _semi_scramble(self: Controller) -> str:
                 return "scramble"
             self._scramble_move_history = moves
             logger.info("scramble: 识别=%s", moves)
-            await self.move_queue.put(moves)
+            await self._send_moves(moves)
             self._scramble_seen_move = True
             self._no_scramble_cnt = 0
         else:
@@ -470,9 +485,9 @@ async def _semi_solve(self: Controller) -> str:
         solution = result["solution"]
         logger.info("semi/solve: %s (%d步)", solution, len(solution.split()))
         if self.recipe.recipe.cube == "pocket":
-            await self.move_queue.put(self._build_pocket_moves(result))
+            await self._send_moves(self._build_pocket_moves(result))
         else:
-            await self.move_queue.put(self._build_phased_moves(result))
+            await self._send_moves(self._build_phased_moves(result))
     except Exception as e:
         logger.error("semi/solve 失败: %s", e, exc_info=True)
     return "scramble"
@@ -563,7 +578,7 @@ async def _rank_scramble(self: Controller) -> str:
                 self._no_scramble_cnt = 0
                 self._last_move = moves
                 logger.info("rank/scramble: 帧=%d 分类=%s 识别=%s", ts, labels, moves)
-                await self.move_queue.put(moves)
+                await self._send_moves(moves)
                 await asyncio.sleep(0.5)
             else:
                 self._no_scramble_cnt += 1
@@ -627,9 +642,9 @@ async def _rank_solve(self: Controller) -> str:
         solution = result["solution"]
         logger.info("rank/solve: %s (%d步)", solution, len(solution.split()))
         if self.recipe.recipe.cube == "pocket":
-            await self.move_queue.put(self._build_pocket_moves(result))
+            await self._send_moves(self._build_pocket_moves(result))
         else:
-            await self.move_queue.put(self._build_phased_moves(result))
+            await self._send_moves(self._build_phased_moves(result))
     except Exception as e:
         logger.error("rank/solve 失败: %s", e, exc_info=True)
 
@@ -777,9 +792,9 @@ async def _solo_solve(self: Controller) -> str:
         solution = result["solution"]
         logger.info("solo/solve: %s (%d步)", solution, len(solution.split()))
         if self.recipe.recipe.cube == "pocket":
-            await self.move_queue.put(self._build_pocket_moves(result))
+            await self._send_moves(self._build_pocket_moves(result))
         else:
-            await self.move_queue.put(self._build_phased_moves(result))
+            await self._send_moves(self._build_phased_moves(result))
     except Exception as e:
         logger.error("solo/solve 失败: %s", e, exc_info=True)
 
@@ -873,9 +888,9 @@ async def _holder_solve(self: Controller) -> str:
         solution = result["solution"]
         logger.info("holder/solve: %s (%d步)", solution, len(solution.split()))
         if self.recipe.recipe.cube == "pocket":
-            await self.move_queue.put(self._build_pocket_moves(result))
+            await self._send_moves(self._build_pocket_moves(result))
         else:
-            await self.move_queue.put(self._build_phased_moves(result))
+            await self._send_moves(self._build_phased_moves(result))
     except Exception as e:
         logger.error("holder/solve 失败: %s", e)
 
@@ -933,9 +948,9 @@ async def _team_solve(self: Controller) -> str:
         solution = result["solution"]
         logger.info("team/solve: %s (%d步)", solution, len(solution.split()))
         if self.recipe.recipe.cube == "pocket":
-            await self.move_queue.put(self._build_pocket_moves(result))
+            await self._send_moves(self._build_pocket_moves(result))
         else:
-            await self.move_queue.put(self._build_phased_moves(result))
+            await self._send_moves(self._build_phased_moves(result))
     except Exception as e:
         logger.error("team/solve 失败: %s", e)
 
@@ -1058,7 +1073,7 @@ async def _week_solve(self: Controller) -> str:
         delay = random.uniform(0, 5)
         logger.info("week/solve: 随机延迟 %.1fs 后下发", delay)
         await asyncio.sleep(delay)
-        await self.move_queue.put(moves)
+        await self._send_moves(moves)
     except Exception as e:
         logger.error("week/solve 失败: %s", e)
 
@@ -1182,6 +1197,44 @@ async def _remote_solve(self: Controller) -> str:
     return "solve"
 #endregion
 
+#region proxy
+# ======================================================================
+# Proxy 模式：BLE 监听真实魔方，记录 CSV + 转发到 ESP32
+#   record → idle → record
+#   状态机由 UI 检测驱动（scrcpy），BLE 只负责记录和转发
+# ======================================================================
+
+async def _proxy_record(self: Controller) -> str:
+    """持续监听 BLE 数据，同时检测 UI 状态变化。"""
+    feat = self.recipe.recipe.feature("scramble_area")
+    if feat and feat.roi:
+        x, y, w, h = feat.roi
+    else:
+        feat = None
+    frame = self.scrcpy.last_frame
+    if frame is not None and feat and feat.roi:
+        crop = frame[y:y+h, x:x+w]
+        chars = segment(crop) if self.classifier else None
+        if chars:
+            logger.debug("proxy/record: 检测到打乱区域")
+            return "record"
+    await asyncio.sleep(0.5)
+    return "record"
+
+
+async def _proxy_idle(self: Controller) -> str:
+    """等待 UI 事件或 BLE 输入。"""
+    await asyncio.sleep(1.0)
+    return "idle"
+
+
+async def _proxy_solve(self: Controller) -> str:
+    """等待 solve 完成，UI 检测驱动状态转移。"""
+    await asyncio.sleep(0.5)
+    return "solve"
+
+#endregion
+
 # ======================================================================
 # 默认 handler（空操作）
 # ======================================================================
@@ -1240,6 +1293,12 @@ def _get_handlers(mode: str) -> dict[str, any]:
             "scramble": _remote_scramble,
             "solve": _remote_solve,
         }
+    if mode == "proxy":
+        return {
+            "record": _proxy_record,
+            "idle": _proxy_idle,
+            "solve": _proxy_solve,
+        }
     return {}
 
 
@@ -1280,6 +1339,7 @@ if __name__ == "__main__":
     parser.add_argument("--telnet", type=int, default=5556, metavar="PORT", help="启动 telnet REPL 服务器 (默认 5556，设为 0 禁用)")
     parser.add_argument("--web-port", type=int, default=8080, metavar="PORT", help="Web 终端端口 (默认 8080，设为 0 关闭)")
     parser.add_argument("--max-solves", type=int, default=0, metavar="N", help="达到 N 次 solve 后自动锁屏退出 (0=不限制)")
+    parser.add_argument("--proxy", action="store_true", help="BLE 代理模式: 监听真实 GAN i3 魔方转动，记录 CSV 并转发到 ESP32")
     args = parser.parse_args()
 
     classifier_config = {"type": args.classifier}
@@ -1293,6 +1353,7 @@ if __name__ == "__main__":
             telnet_port=args.telnet,
             web_port=args.web_port,
             max_solves=args.max_solves,
+            proxy_mode=args.proxy,
         )
         if args.mock:
             from device.cube_api import MockCubeAPI

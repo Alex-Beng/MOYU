@@ -28,6 +28,7 @@ dir 映射：
     await api.open()
     ...
 """
+import asyncio
 import logging
 
 import aiohttp
@@ -139,7 +140,7 @@ class CubeAPI:
                 result = await resp.json()
                 logger.info("← %s %s  resp=%s", method, url, result)
                 return result
-        except aiohttp.ClientError as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             logger.warning("请求失败 %s %s: %s", method, url, e)
             return {}
 

@@ -7,11 +7,12 @@
     },
     "scramble_delay": 90,
     "solve_delay": 90,
-    "cross_delay": 80,
-    "f2l_delay": 100,
-    "oll_delay": 80,
+    "cross_delay": 120,
+    "f2l_delay": 110,
+    "oll_delay": 90,
+    "alll_delay": 70,
     "oll_time": 300,
-    "alll_time":600,
+    "alll_time":400,
     "rotation": "z",
     "ui": {
         "begin_holder": {

@@ -1,0 +1,10 @@
+{
+    "name": "GAN i3 Proxy",
+    "mode": "proxy",
+    "device": {
+        "width": 1080,
+        "height": 2400
+    },
+    "scramble_delay": 90,
+    "solve_delay": 90
+}
