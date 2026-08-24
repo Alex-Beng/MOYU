@@ -9,7 +9,7 @@ from train.utils import gram_schmidt, quat_multiply, quat_conjugate
 
 
 class QuatTransformer(nn.Module):
-    """输入事件序列 + 角速度 → 输出 6D 姿态增量（残差形式，初始化为 identity）"""
+    """输入事件序列 + 角速度 + 面片 → 输出 6D 姿态增量（残差形式，初始化为 identity）"""
 
     def __init__(self, d_model: int = 128, nhead: int = 8,
                  num_layers: int = 6, seq_len: int = 128,
@@ -20,6 +20,7 @@ class QuatTransformer(nn.Module):
 
         self.event_embed = nn.Embedding(13, d_model, padding_idx=0)
         self.gyro_proj = nn.Linear(3, d_model)
+        self.facelet_embed = nn.Embedding(7, d_model, padding_idx=0)  # 0=未知, 1-6=URFDLB
         self.pos_embed = nn.Parameter(torch.randn(1, seq_len, d_model) * 0.02)
 
         layer = nn.TransformerDecoderLayer(
@@ -47,24 +48,22 @@ class QuatTransformer(nn.Module):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p, gain=0.5)
-        # 最后一层初始化为 0，确保初始输出 = identity
         nn.init.zeros_(self.head[-1].weight)
         nn.init.zeros_(self.head[-1].bias)
 
-    def forward(self, event_ids: torch.Tensor, gyros: torch.Tensor) -> torch.Tensor:
+    def forward(self, event_ids: torch.Tensor, gyros: torch.Tensor,
+                facelets: torch.Tensor | None = None) -> torch.Tensor:
         B, T = event_ids.shape
-        # 事件嵌入
         x = self.event_embed(event_ids)                     # [B, T, d_model]
-        # 角速度归一化 + 投影
         gyro_norm = gyros / 7.0
         x = x + self.gyro_proj(gyro_norm)                   # [B, T, d_model]
-        # 位置编码
+        if facelets is not None:
+            fl = (facelets + 1).clamp(min=0, max=6)         # -1→0, 0→1, ..., 5→6
+            fl_emb = self.facelet_embed(fl)                  # [B, T, 54, d_model]
+            x = x + fl_emb.sum(dim=-2)                       # [B, T, d_model]
         x = x + self.pos_embed[:, :T, :]                    # [B, T, d_model]
-        # Causal mask
         causal_mask = torch.triu(torch.full((T, T), float('-inf')), diagonal=1).to(x.device)
-        # Transformer Decoder
         x = self.decoder(x, x, tgt_mask=causal_mask)        # [B, T, d_model]
-        # 残差输出：identity + head(x)
         residual = self.head(x)                              # [B, T, 6]
         delta_6d = self.identity_6d + residual               # [B, T, 6]
         return delta_6d

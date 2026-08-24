@@ -17,10 +17,20 @@ def _proximity_mask(event_ids: torch.Tensor, radius: int) -> torch.Tensor:
 
 def compute_losses(pred_delta_6d: torch.Tensor, batch: dict,
                    alpha: float = 1.0, beta: float = 0.1,
-                   event_weight: float = 3.0, proximity_radius: int = 8) -> dict:
-    B, T = batch["quats"].shape[:2]
-    gt_quats = batch["quats"]
-    event_ids = batch["event_ids"]
+                   event_weight: float = 3.0, proximity_radius: int = 8,
+                   chunk_size: int = 8) -> dict:
+    gt_quats = batch["quats"]                                 # [B, T, 4]
+    event_ids = batch["event_ids"]                            # [B, T]
+    T = gt_quats.shape[1]
+    if chunk_size <= 0:
+        chunk_size = T
+
+    slice_end = chunk_size
+    gt_quats = gt_quats[:, :slice_end]
+    event_ids = event_ids[:, :slice_end]
+    pred_delta_6d = pred_delta_6d[:, :slice_end]
+
+    B, T = gt_quats.shape[:2]
 
     # GT 增量四元数
     gt_delta_q = quat_delta(gt_quats[:, :-1], gt_quats[:, 1:])
@@ -44,17 +54,17 @@ def compute_losses(pred_delta_6d: torch.Tensor, batch: dict,
     pred_quats = torch.stack(pred_quats, dim=1)
 
     # 事件近邻权重
-    mask = _proximity_mask(event_ids, proximity_radius)  # [B, T]
-    weight = 1.0 + event_weight * mask                   # [B, T]
+    mask = _proximity_mask(event_ids, proximity_radius)
+    weight = 1.0 + event_weight * mask
 
     # 1. Geodesic Loss（加权）
     dot = (pred_quats * gt_quats).sum(dim=-1).abs().clamp(max=1.0 - 1e-7)
-    geo_per_tick = 2 * torch.acos(dot)                   # [B, T]
+    geo_per_tick = 2 * torch.acos(dot)
     L_geo = (geo_per_tick * weight).sum() / weight.sum()
 
     # 2. 6D MSE Loss（加权）
     gt_delta_6d = quat_to_6d(gt_delta_q)
-    mse_per_tick = (pred_delta_6d - gt_delta_6d).pow(2).mean(dim=-1)  # [B, T]
+    mse_per_tick = (pred_delta_6d - gt_delta_6d).pow(2).mean(dim=-1)
     L_6d = (mse_per_tick * weight).sum() / weight.sum()
 
     total = alpha * L_geo + beta * L_6d

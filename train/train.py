@@ -30,15 +30,15 @@ logging.basicConfig(
 logger = logging.getLogger("train")
 
 
-def train_epoch(model, loader, optimizer, scheduler, device, epoch):
+def train_epoch(model, loader, optimizer, scheduler, device, epoch, chunk_size=8):
     model.train()
     total_loss = 0.0
     total_angle = 0.0
     n_batches = 0
     for batch in loader:
         batch = {k: v.to(device) for k, v in batch.items()}
-        delta_6d = model(batch["event_ids"], batch["gyros"])
-        losses = compute_losses(delta_6d, batch, event_weight=3.0, proximity_radius=8)
+        delta_6d = model(batch["event_ids"], batch["gyros"], batch.get("facelets"))
+        losses = compute_losses(delta_6d, batch, event_weight=3.0, proximity_radius=8, chunk_size=chunk_size)
         optimizer.zero_grad()
         losses["loss"].backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -56,15 +56,15 @@ def train_epoch(model, loader, optimizer, scheduler, device, epoch):
 
 
 @torch.no_grad()
-def eval_epoch(model, loader, device, epoch):
+def eval_epoch(model, loader, device, epoch, chunk_size=8):
     model.eval()
     total_loss = 0.0
     total_angle = 0.0
     n_batches = 0
     for batch in loader:
         batch = {k: v.to(device) for k, v in batch.items()}
-        delta_6d = model(batch["event_ids"], batch["gyros"])
-        losses = compute_losses(delta_6d, batch, event_weight=3.0, proximity_radius=8)
+        delta_6d = model(batch["event_ids"], batch["gyros"], batch.get("facelets"))
+        losses = compute_losses(delta_6d, batch, event_weight=3.0, proximity_radius=8, chunk_size=chunk_size)
         total_loss += losses["loss"].item()
         total_angle += losses["angle_error"].item()
         n_batches += 1
@@ -109,6 +109,10 @@ def main():
                         help="禁用数据增强")
     parser.add_argument("--pretrain-epochs", type=int, default=20,
                         help="预训练轮数（只含事件窗口，默认 20）")
+    parser.add_argument("--chunk-size", type=int, default=8,
+                        help="Action chunk 大小（默认 8）")
+    parser.add_argument("--event-ratio", type=float, default=0.5,
+                        help="训练时事件窗口采样比例（默认 0.5）")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -124,7 +128,7 @@ def main():
         logger.info("=== Stage 1: 预训练（仅事件窗口）===")
         pt_train_ds, pt_val_ds, _ = build_datasets(
             args.data, seq_len=args.seq_len, stride=args.stride,
-            augment=not args.no_augment, pretrain=True,
+            augment=not args.no_augment, pretrain=True, event_ratio=args.event_ratio,
         )
         pt_train_loader, pt_val_loader, _ = build_dataloaders(
             pt_train_ds, pt_val_ds, None, batch_size=args.batch_size,
@@ -146,10 +150,10 @@ def main():
         for epoch in range(pretrain_epochs):
             t0 = time.time()
             train_loss, train_angle = train_epoch(
-                model, pt_train_loader, optimizer, scheduler, device, epoch)
+                model, pt_train_loader, optimizer, scheduler, device, epoch, chunk_size=args.chunk_size)
             if pt_val_loader:
                 val_loss, val_angle = eval_epoch(
-                    model, pt_val_loader, device, epoch)
+                    model, pt_val_loader, device, epoch, chunk_size=args.chunk_size)
             logger.info("  time=%.1fs  lr=%.2e", time.time() - t0, optimizer.param_groups[0]["lr"])
 
         # 保存预训练模型
@@ -162,7 +166,7 @@ def main():
     logger.info("=== Stage 2: 微调（全量数据）===")
     train_ds, val_ds, test_ds = build_datasets(
         args.data, seq_len=args.seq_len, stride=args.stride,
-        augment=not args.no_augment, pretrain=False,
+        augment=not args.no_augment, pretrain=False, event_ratio=args.event_ratio,
     )
     train_loader, val_loader, _ = build_dataloaders(
         train_ds, val_ds, test_ds, batch_size=args.batch_size,
@@ -204,10 +208,10 @@ def main():
     for epoch in range(start_epoch, args.epochs):
         t0 = time.time()
         train_loss, train_angle = train_epoch(
-            model, train_loader, optimizer, scheduler, device, epoch)
+            model, train_loader, optimizer, scheduler, device, epoch, chunk_size=args.chunk_size)
 
         val_loss, val_angle = eval_epoch(
-            model, val_loader, device, epoch) if val_loader else (0, 0)
+            model, val_loader, device, epoch, chunk_size=args.chunk_size) if val_loader else (0, 0)
 
         elapsed = time.time() - t0
         logger.info("  time=%.1fs  lr=%.2e", elapsed, optimizer.param_groups[0]["lr"])
@@ -246,7 +250,7 @@ def visualize_prediction(model, dataset, device, args):
     batch = {k: v.unsqueeze(0).to(device) for k, v in sample.items()}
 
     with torch.no_grad():
-        delta_6d = model(batch["event_ids"], batch["gyros"])
+        delta_6d = model(batch["event_ids"], batch["gyros"], batch.get("facelets"))
 
     # 重建预测姿态
     from train.utils import rotm_to_quat, quat_multiply, gram_schmidt

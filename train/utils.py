@@ -2,6 +2,15 @@
 import torch
 import torch.nn.functional as F
 
+import numpy as np
+
+FACELET_MAP = {"U": 0, "R": 1, "F": 2, "D": 3, "L": 4, "B": 5}
+
+
+def facelets_to_idx(facelets_str: str) -> np.ndarray:
+    """54 字符面片串 → [54] int 索引"""
+    return np.array([FACELET_MAP.get(c, 0) for c in facelets_str], dtype=np.int64)
+
 
 def gram_schmidt(u1: torch.Tensor, u2: torch.Tensor) -> torch.Tensor:
     """6D → 旋转矩阵 [B, T, 3, 3]"""
