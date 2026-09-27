@@ -351,7 +351,7 @@ def main():
     p_ocr.add_argument("--single-step", action="store_true", help="逐步下发转动 (debug)")
 
     p_ui = sub.add_parser("ui", help="采集 UI 模板图")
-    p_ui.add_argument("--output", default="recipe/recipes/templates/", help="模板保存目录")
+    p_ui.add_argument("--output", default="templates/", help="模板保存目录")
     p_ui.add_argument("--serial", default=None, help="adb 设备序列号")
 
     args = parser.parse_args()

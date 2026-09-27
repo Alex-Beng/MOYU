@@ -16,7 +16,7 @@
     "rotation": "z",
     "ui": {
         "begin_rank": {
-            "template": "../../templates/begin_rank.png",
+            "template": "../../templates/begin_rank_new.png",
             "roi": null,
             "threshold": 0.85,
             "desc": "开始排位按钮"
