@@ -29,6 +29,8 @@ python -m vision.matcher screen.png tmpl.png                            # 模板
 python -m vision.detector screen.png recipe/recipes/example.json begin_rank
 python -m ocr.segmentor scramble_screen.png                             # OCR 气泡分割测试
 python -m ocr.classifier char.png --backend cnn --model ocr/cnn_model.onnx
+python -m tools.annotate_debug                                           # 网格模式标注 debug/scramble → data/（鼠标点选错误格跳过，翻页即落盘）
+python -m tools.annotate_debug --input debug/scramble/ --copy            # 复制而非移动
 python -m device.cube_api 192.168.4.1                                   # 魔方 API 测试
 python -m tools.ble_monitor                                            # BLE 魔方监听器（自动扫描）
 python -m tools.ble_monitor --address AA:BB:CC:DD:EE:FF                # 指定地址连接
