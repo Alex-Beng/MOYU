@@ -68,6 +68,7 @@ body { background:#000; font-family:monospace; }
   <div class="row"><span class="label">moves</span><span class="value" id="v-moves">-</span></div>
   <div class="row"><span class="label">uptime</span><span class="value" id="v-uptime">-</span></div>
   <div class="row"><span class="label">solve</span><span class="value" id="v-solve">-</span></div>
+  <div class="row"><span class="label">frame</span><span class="value" id="v-frame">-</span></div>
   <div class="ctrl-toggle on" id="pause-toggle">⏸ 暂停</div>
   <div class="ctrl-toggle on" id="panel-toggle">🔧 控制面板</div>
   <div id="panel">
@@ -131,8 +132,10 @@ img.addEventListener('click', async function(e) {
   const scale = Math.min(rect.width / nw, rect.height / nh);
   const dispW = nw * scale, dispH = nh * scale;
   const offX = (rect.width - dispW) / 2, offY = (rect.height - dispH) / 2;
-  const imgX = Math.round((e.clientX - rect.left - offX) / scale);
-  const imgY = Math.round((e.clientY - rect.top - offY) / scale);
+  let fx = (e.clientX - rect.left - offX) / dispW;
+  let fy = (e.clientY - rect.top - offY) / dispH;
+  fx = Math.min(1, Math.max(0, fx));
+  fy = Math.min(1, Math.max(0, fy));
 
   fb.style.left = e.clientX + 'px';
   fb.style.top = e.clientY + 'px';
@@ -142,7 +145,7 @@ img.addEventListener('click', async function(e) {
   try {
     await fetch('/api/click', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({x:imgX, y:imgY})
+      body:JSON.stringify({fx:fx, fy:fy})
     });
   } catch(e) {}
 });
@@ -186,6 +189,8 @@ async function poll() {
     document.getElementById('v-uptime').textContent = pad(Math.floor(t/3600)) + ':' + pad(Math.floor((t%3600)/60)) + ':' + pad(t%60);
     const s = d.solve_count, m = d.max_solves;
     document.getElementById('v-solve').textContent = m > 0 ? s + '/' + m : s;
+    const fa = d.frame_age;
+    document.getElementById('v-frame').textContent = (fa === null || fa === undefined) ? '-' : Math.round(fa * 1000) + ' ms';
     pauseToggle.dataset.paused = d.paused;
     pauseToggle.className = d.paused ? 'ctrl-toggle off' : 'ctrl-toggle on';
     pauseToggle.textContent = d.paused ? '▶ 继续' : '⏸ 暂停';
@@ -198,13 +203,27 @@ setInterval(poll, 500); poll();
 """
 
 
+_PREVIEW_MAX_EDGE = 1280   # Web 预览降采样长边（仅浏览器预览，检测仍用全分辨率）
+_JPEG_QUALITY = 75
+_WRITE_BUFFER_LIMIT = 512 * 1024   # 客户端写缓冲超过此值则跳帧，防止延迟累积
+
+
 class WebFrameServer:
-    """aiohttp 服务器，提供 MJPEG 流 + 控制器状态。"""
+    """aiohttp 服务器，提供 MJPEG 流 + 控制器状态。
+
+    为避免在事件循环上做全分辨率 JPEG 编码拖慢 scrcpy 解码线程，
+    这里用一个共享编码任务：只在有新帧时编码一次（降采样），所有客户端共享结果。
+    """
 
     def __init__(self, controller, host: str = "0.0.0.0", port: int = 8080):
         self.controller = controller
         self.host = host
         self.port = port
+        self._encoded_seq = -1
+        self._encoded_bytes: bytes | None = None
+        self._encoded_ts: float | None = None
+        self._cv = asyncio.Condition()
+        self._encoder_task: asyncio.Task | None = None
 
     @property
     def scrcpy(self):
@@ -224,37 +243,96 @@ class WebFrameServer:
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         await web.TCPSite(runner, self.host, self.port).start()
+        self._encoder_task = asyncio.create_task(self._encoder_loop(), name="web_encoder")
         logger.info("Web 终端 http://%s:%d", self.host, self.port)
+
+    @staticmethod
+    def _encode(frame, quality: int = _JPEG_QUALITY) -> bytes:
+        """降采样 + JPEG 编码（在线程池中调用，不阻塞事件循环）。"""
+        h, w = frame.shape[:2]
+        longest = max(h, w)
+        if longest > _PREVIEW_MAX_EDGE:
+            scale = _PREVIEW_MAX_EDGE / longest
+            frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        if not ok:
+            raise RuntimeError("JPEG 编码失败")
+        return buf.tobytes()
+
+    async def _encoder_loop(self):
+        """共享编码任务：仅在出现新帧时编码一次，供所有客户端复用。"""
+        loop = asyncio.get_running_loop()
+        last_seq = -1
+        while True:
+            seq = self.scrcpy.frame_seq
+            if seq == last_seq:
+                await asyncio.sleep(0.02)
+                continue
+            frame = self.scrcpy.last_frame
+            ts = self.scrcpy.frame_ts
+            if frame is None:
+                await asyncio.sleep(0.02)
+                continue
+            try:
+                data = await loop.run_in_executor(None, self._encode, frame)
+            except Exception as e:
+                logger.debug("Web 编码失败: %s", e)
+                await asyncio.sleep(0.05)
+                continue
+            last_seq = seq
+            self._encoded_seq = seq
+            self._encoded_bytes = data
+            self._encoded_ts = ts
+            async with self._cv:
+                self._cv.notify_all()
+
+    def _frame_age(self) -> float | None:
+        if self._encoded_ts is None:
+            return None
+        return time.monotonic() - self._encoded_ts
 
     async def _handle_index(self, request):
         return web.Response(text=_PAGE, content_type="text/html")
 
     async def _handle_frame(self, request):
-        frame = self.scrcpy.last_frame
-        if frame is None:
+        if self._encoded_bytes is None:
             return web.Response(status=204)
-        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        return web.Response(body=buf.tobytes(), content_type="image/jpeg")
+        return web.Response(body=self._encoded_bytes, content_type="image/jpeg")
 
     async def _handle_stream(self, request):
         resp = web.StreamResponse()
         resp.headers["Content-Type"] = "multipart/x-mixed-replace; boundary=frame"
         await resp.prepare(request)
+        transport = request.transport
+        last_sent = self._encoded_seq
         try:
             while True:
-                frame = self.scrcpy.last_frame
-                if frame is not None:
-                    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                    await resp.write(
-                        b"--frame\r\n"
-                        b"Content-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
-                    )
-                await asyncio.sleep(0.1)
+                # 等待新编码帧
+                async with self._cv:
+                    await self._cv.wait_for(lambda: self._encoded_seq != last_sent)
+                    data = self._encoded_bytes
+                    last_sent = self._encoded_seq
+                if data is None:
+                    continue
+                # 背压：客户端写缓冲过大则跳帧，只追最新帧
+                if transport is not None and transport.get_write_buffer_size() > _WRITE_BUFFER_LIMIT:
+                    continue
+                await resp.write(
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" + data + b"\r\n"
+                )
         except (ConnectionResetError, ConnectionAbortedError):
             logger.debug("Web 客户端断开连接")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug("Web 流结束: %s", e)
+        return resp
 
     async def _handle_status(self, request):
         cl = self.controller.cube_loop
+        frame = self.scrcpy.last_frame
+        frame_size = [frame.shape[1], frame.shape[0]] if frame is not None else None
         current = cl.current_moves
         if isinstance(current, list):
             moves_str = " ".join(s.get("move", "") for s in current if isinstance(s, dict))
@@ -287,12 +365,29 @@ class WebFrameServer:
                 "solve_count": self.controller._solve_count,
                 "max_solves": self.controller._max_solves,
                 "paused": self.controller._paused,
+                "frame_age": self._frame_age(),
+                "frame_size": frame_size,
             }),
         )
 
     async def _handle_click(self, request):
         data = await request.json()
-        x, y = data["x"], data["y"]
+        frame = self.scrcpy.last_frame
+        if "fx" in data and "fy" in data:
+            if frame is None:
+                logger.warning("Web 点击: 暂无画面帧，忽略")
+                return web.Response(status=204)
+            h, w = frame.shape[:2]
+            fx = min(1.0, max(0.0, float(data["fx"])))
+            fy = min(1.0, max(0.0, float(data["fy"])))
+            x, y = round(fx * (w - 1)), round(fy * (h - 1))
+        else:
+            x, y = int(data["x"]), int(data["y"])
+        if frame is not None:
+            h, w = frame.shape[:2]
+            if not (0 <= x < w and 0 <= y < h):
+                logger.warning("Web 点击越界 (%d, %d)，忽略 (画面 %dx%d)", x, y, w, h)
+                return web.Response(status=204)
         logger.info("Web 远程点击 (%d, %d)", x, y)
         self.controller.scrcpy.tap(x, y)
         return web.Response(text="ok")

@@ -33,6 +33,8 @@ class ScrcpyClient:
         self.bitrate = bitrate
         self._client: scrcpy.Client | None = None
         self._connected = False
+        self._frame_seq = 0
+        self._frame_ts: float | None = None
 
     def connect(self):
         """建立 scrcpy 连接并启动帧循环。"""
@@ -78,7 +80,9 @@ class ScrcpyClient:
         logger.info("scrcpy 初始化完成，设备: %s", self._client.device_name)
 
     def _on_frame(self, frame):
-        pass
+        if frame is not None:
+            self._frame_seq += 1
+            self._frame_ts = time.monotonic()
 
     def _on_disconnect(self):
         self._connected = False
@@ -94,6 +98,27 @@ class ScrcpyClient:
     @property
     def connected(self) -> bool:
         return self._connected
+
+    @property
+    def frame_seq(self) -> int:
+        """已收到的帧计数，用于判断是否有新帧。"""
+        return self._frame_seq
+
+    @property
+    def frame_ts(self) -> float | None:
+        """最近一帧到达时刻 (time.monotonic)，用于计算帧龄。"""
+        return self._frame_ts
+
+    @property
+    def frame_age(self) -> float | None:
+        """最近一帧的帧龄（秒）= 现在 - last_frame 到达时刻。
+
+        反映"画面落后现实"的程度：值大说明 scrcpy 解码/传输落后，
+        基于该帧做决策会用到过期画面。
+        """
+        if self._frame_ts is None:
+            return None
+        return time.monotonic() - self._frame_ts
 
     @property
     def last_frame(self) -> np.ndarray | None:

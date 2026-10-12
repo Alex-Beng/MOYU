@@ -41,9 +41,16 @@ DEBUG = False
 class Controller:
     """主控制器 —— 编排各独立任务"""
 
-    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None, recipe_path: str | None = None, telnet_port: int | None = None, web_port: int = 8080, max_solves: int = 0, proxy_mode: bool = False):
+    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None, recipe_path: str | None = None, telnet_port: int | None = None, web_port: int = 8080, max_solves: int = 0, proxy_mode: bool = False, bitrate: int | None = None, scrcpy_fps: int | None = None):
         self.recipe = RecipeLoader(recipe_path) if recipe_path else RecipeLoader()
-        self.scrcpy = ScrcpyClient(max_width=0, max_fps=10, bitrate=200_000_000)
+        _recipe = self.recipe.recipe
+        _bitrate = bitrate if bitrate is not None else _recipe.scrcpy_bitrate
+        _fps = scrcpy_fps if scrcpy_fps is not None else _recipe.scrcpy_max_fps
+        self.scrcpy = ScrcpyClient(
+            max_width=0,
+            max_fps=_fps if _fps is not None else 10,
+            bitrate=_bitrate if _bitrate is not None else 8_000_000,
+        )
         self._telnet_port = telnet_port
         self._web_port = web_port
         self._proxy_mode = proxy_mode
@@ -1340,6 +1347,8 @@ if __name__ == "__main__":
     parser.add_argument("--web-port", type=int, default=8080, metavar="PORT", help="Web 终端端口 (默认 8080，设为 0 关闭)")
     parser.add_argument("--max-solves", type=int, default=0, metavar="N", help="达到 N 次 solve 后自动锁屏退出 (0=不限制)")
     parser.add_argument("--proxy", action="store_true", help="BLE 代理模式: 监听真实 GAN i3 魔方转动，记录 CSV 并转发到 ESP32")
+    parser.add_argument("--bitrate", type=int, default=None, metavar="BPS", help="scrcpy 视频码率 (bps)，覆盖 recipe (默认 8Mbps；WiFi adb 建议 2000000-3000000)")
+    parser.add_argument("--scrcpy-fps", type=int, default=None, metavar="N", help="scrcpy 最大帧率，覆盖 recipe (默认 10)")
     args = parser.parse_args()
 
     classifier_config = {"type": args.classifier}
@@ -1354,6 +1363,8 @@ if __name__ == "__main__":
             web_port=args.web_port,
             max_solves=args.max_solves,
             proxy_mode=args.proxy,
+            bitrate=args.bitrate,
+            scrcpy_fps=args.scrcpy_fps,
         )
         if args.mock:
             from device.cube_api import MockCubeAPI

@@ -88,10 +88,14 @@ class CubeAPI:
     ESP32 AP 模式默认 192.168.4.1。
     """
 
-    def __init__(self, host: str = "192.168.4.1", port: int = 80, timeout: float = 7.0, single_step: bool = False):
+    def __init__(self, host: str = "192.168.4.1", port: int = 80, timeout: float = 30.0, single_step: bool = False, wait: bool = True):
         self.base_url = f"http://{host}:{port}"
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.single_step = single_step
+        # wait=True: append ?wait=1 to /api/moves so the firmware blocks until the
+        # whole batch has been played by the BLE move loop. This makes the
+        # controller send one batch at a time (no queue pile-up / long bursts).
+        self.wait = wait
         self._session: aiohttp.ClientSession | None = None
 
     async def open(self):
@@ -112,6 +116,7 @@ class CubeAPI:
             logger.warning("session 未初始化，跳过请求")
             return {}
         url = f"{self.base_url}{path}"
+        base_path = path.split("?", 1)[0]
         body = kwargs.get("json")
         # logger.info("→ %s %s  body=%s", method, url, body)
         try:
@@ -119,7 +124,7 @@ class CubeAPI:
                 content_type = resp.content_type or ""
 
                 # ESP32 返回纯文本/JSON 的路径
-                if path in ("/api/facelets", "/api/move", "/api/moves", "/api/state", "/api/delay"):
+                if base_path in ("/api/facelets", "/api/move", "/api/moves", "/api/state", "/api/delay"):
                     text = await resp.text()
                     text = text.strip()
                     logger.info("← %s %s  resp=%s", method, url, text)
@@ -159,7 +164,8 @@ class CubeAPI:
 
     async def send_moves_raw(self, steps: list[dict]) -> dict:
         """批量转动，直接指定 [{"face":0,"dir":0}, ...]。"""
-        return await self._request("POST", "/api/moves", json=steps)
+        path = "/api/moves?wait=1" if self.wait else "/api/moves"
+        return await self._request("POST", path, json=steps)
 
     async def send_moves(self, moves: str | list) -> dict:
         """下发转动序列。固件自动识别 inline delay。

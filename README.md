@@ -157,7 +157,38 @@ python controller.py --state scramble             # 指定初始状态
 python controller.py --telnet 5556                # 启动 Telnet REPL（默认 5556，0 关闭）
 python controller.py --web-port 8080              # Web 终端端口（默认 8080，0 关闭）
 python controller.py --single-step                # 逐步下发（调试）
+python controller.py --bitrate 3000000            # scrcpy 视频码率（WiFi adb 建议 2000000-3000000）
+python controller.py --scrcpy-fps 10              # scrcpy 最大帧率
 ```
+
+### 实时画面延迟调优（scrcpy）
+
+Web 终端实时画面走 `scrcpy → adb → Python 解码 → MJPEG`，延迟主要来自**传输链路带宽**：
+
+- **USB adb**：延迟最低，码率可放心调高
+- **WiFi adb**：链路带宽有限，码率过高会导致 adb/WiFi 缓冲区积压，产生秒级延迟（画面停在几秒前的旧帧）
+
+调优顺序：
+
+1. 优先使用 **USB adb**（延迟稳定、带宽充足）
+2. WiFi 下实测链路带宽，码率应 **≤ 链路带宽 50%**（如链路 4Mbps → 码率 2Mbps）
+3. 通过 CLI 或 recipe 调低码率：
+
+```bash
+python controller.py --bitrate 2500000            # WiFi 下调低码率
+python controller.py --bitrate 50000000           # USB 下提高画质
+```
+
+recipe 中也可配置（CLI 优先于 recipe）：
+
+```json
+{
+  "scrcpy_bitrate": 2500000,
+  "scrcpy_max_fps": 10
+}
+```
+
+Web 终端左上角状态面板的 `frame` 项显示**帧龄**（当前画面相对最新帧的毫秒延迟），可用于验证优化效果。
 
 ### 求解器
 

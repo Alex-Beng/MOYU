@@ -85,6 +85,8 @@ class Recipe:
     rotation: str | None = None
     alll_prob: float = 0.2
     move_format: str = "dir"  # "dir" = face/dir, "str" = move string
+    scrcpy_bitrate: int | None = None      # scrcpy 视频码率 (bps)，None=默认 8Mbps；WiFi adb 建议 2-3Mbps
+    scrcpy_max_fps: int | None = None      # scrcpy 最大帧率，None=默认 10
     ui: dict[str, UIFeature] = field(default_factory=dict)
     base_dir: Path = field(default_factory=Path)
 
@@ -104,6 +106,8 @@ class Recipe:
             alll_time=d.get("alll_time"),
             move_format=d.get("move_format", "dir"),
             alll_prob=d.get("alll_prob", 0.2),
+            scrcpy_bitrate=d.get("scrcpy_bitrate"),
+            scrcpy_max_fps=d.get("scrcpy_max_fps"),
             ui=ui, base_dir=base_dir,
         )
 

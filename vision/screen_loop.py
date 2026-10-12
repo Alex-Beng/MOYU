@@ -1,6 +1,7 @@
 """截图 + UI 检测循环"""
 import asyncio
 import logging
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import AsyncIterator
@@ -34,12 +35,29 @@ class ScrcpySource(FrameSource):
     def __init__(self, client: "ScrcpyClient", fps: float = 5.0):
         self.client = client
         self.interval = 1.0 / fps
+        self._last_log = 0.0
 
     async def frames(self) -> AsyncIterator[np.ndarray]:
         while True:
             await asyncio.sleep(self.interval)
             frame = self.client.last_frame
             if frame is not None:
+                # 帧龄 = 现在 - 该帧到达时刻；用于发现 scrcpy 画面滞后现实。
+                age = self.client.frame_age
+                if age is not None:
+                    now = time.monotonic()
+                    if now - self._last_log >= 1.0:
+                        self._last_log = now
+                        logger.info(
+                            "[frame-age] age=%.2fs seq=%d",
+                            age,
+                            self.client.frame_seq,
+                        )
+                    if age > 1.0:
+                        logger.warning(
+                            "[frame-age] 画面滞后严重: age=%.2fs (>1s)，决策可能基于过期画面",
+                            age,
+                        )
                 yield frame
 
 
