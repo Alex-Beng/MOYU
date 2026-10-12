@@ -151,32 +151,40 @@ def _load_dataset(data_dir: str) -> tuple[np.ndarray, np.ndarray]:
     return np.array(features, dtype=np.float32), np.array(labels, dtype=np.int32)
 
 
-def _load_dataset_grayscale(data_dir: str) -> tuple[np.ndarray, np.ndarray]:
-    """从 data_dir/{label}/ 加载所有样本，返回 (features, labels)。
-    features 为 (N, 1, H, W) 灰度值，归一化到 [0,1]（CNN 用）。
+def _load_dataset_grayscale(data_dir: str) -> tuple[np.ndarray, np.ndarray, list[Path]]:
+    """从 data_dir/{label}/ 加载所有样本，返回 (features, labels, paths)。
+    features 为 (N, H, W) uint8 灰度值（训练时归一化）；paths 与样本一一对应。
     """
     data_path = Path(data_dir)
     h, w = CHAR_SIZE[1], CHAR_SIZE[0]
-    features = []
-    labels = []
 
+    # 第一遍：收集 (label_idx, path)，统计总数
+    items: list[tuple[int, Path]] = []
     for label_idx, label in enumerate(LABELS):
         label_dir = data_path / label
         if not label_dir.exists():
             continue
         imgs = list(label_dir.glob("*.png")) + list(label_dir.glob("*.jpg"))
         logger.info("加载 %s: %d 张", label, len(imgs))
-        for img_path in imgs:
-            img = cv2.imread(str(img_path))
-            if img is None:
-                continue
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            gray = cv2.resize(gray, CHAR_SIZE)
-            features.append(gray)
-            labels.append(label_idx)
+        items.extend((label_idx, p) for p in imgs)
 
-    x = np.array(features, dtype=np.float32).reshape(-1, 1, h, w) / 255.0
-    return x, np.array(labels, dtype=np.int32)
+    # 预分配 uint8 灰度数组，直接按索引填充，避免多重拷贝
+    x = np.empty((len(items), h, w), dtype=np.uint8)
+    labels = np.empty(len(items), dtype=np.int32)
+    paths: list[Path] = []
+    valid = 0
+    for label_idx, img_path in items:
+        img = cv2.imread(str(img_path))
+        if img is None:
+            continue
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        gray = cv2.resize(gray, CHAR_SIZE)
+        x[valid] = gray
+        labels[valid] = label_idx
+        paths.append(img_path)
+        valid += 1
+
+    return x[:valid], labels[:valid], paths
 
 
 # ------------------------------------------------------------------
@@ -255,7 +263,7 @@ def export_templates(data_dir: str, output_dir: str, *args, **kwargs):
 # 训练 CNN → ONNX
 # ------------------------------------------------------------------
 
-def train_cnn(data_dir: str, model_output: str, epochs: int = 20, batch_size: int = 64):
+def train_cnn(data_dir: str, model_output: str, epochs: int = 20, batch_size: int = 256):
     """训练简单 CNN 并导出为 ONNX。
 
     需要安装: pip install torch onnx onnxruntime
@@ -268,7 +276,7 @@ def train_cnn(data_dir: str, model_output: str, epochs: int = 20, batch_size: in
         logger.error("PyTorch 未安装，CNN 训练不可用。pip install torch")
         return
 
-    features, labels = _load_dataset_grayscale(data_dir)
+    features, labels, paths = _load_dataset_grayscale(data_dir)
     if len(features) == 0:
         logger.error("未找到任何训练样本")
         return
@@ -293,11 +301,13 @@ def train_cnn(data_dir: str, model_output: str, epochs: int = 20, batch_size: in
             return x
 
     h, w = CHAR_SIZE[1], CHAR_SIZE[0]
-    x_tensor = torch.tensor(features, dtype=torch.float32)
+    # 保持 uint8，避免 float32 大拷贝；归一化在训练循环中按 batch 进行
+    x_tensor = torch.from_numpy(features).unsqueeze(1)
     y_tensor = torch.tensor(labels, dtype=torch.long)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("训练设备: %s", device)
+    pin = device.type == "cuda"
 
     model = SimpleCNN()
     model.to(device)
@@ -313,7 +323,10 @@ def train_cnn(data_dir: str, model_output: str, epochs: int = 20, batch_size: in
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     dataset = TensorDataset(x_tensor, y_tensor)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+    loader = DataLoader(
+        dataset, batch_size=batch_size, shuffle=True, drop_last=False,
+        num_workers=4, pin_memory=pin, prefetch_factor=2,
+    )
 
     print(f"{'Epoch':>6}  {'Loss':>8}  {'Acc':>8}")
     print("-" * 24)
@@ -324,7 +337,7 @@ def train_cnn(data_dir: str, model_output: str, epochs: int = 20, batch_size: in
         epoch_correct = 0
         epoch_total = 0
         for batch_x, batch_y in loader:
-            batch_x = batch_x.to(device)
+            batch_x = batch_x.to(device).float().div_(255.0)
             batch_y = batch_y.to(device)
             factor = torch.empty(batch_x.size(0), 1, 1, 1, device=device).uniform_(0.5, 1.0)
             batch_x = batch_x * factor
@@ -356,13 +369,17 @@ def train_cnn(data_dir: str, model_output: str, epochs: int = 20, batch_size: in
     logger.info("CNN 权重已保存: %s", weights_path)
 
     # 显示所有分类错误的图片
-    model.eval().to("cpu")
+    model.eval().to(device)
     all_preds = []
-    eval_loader = DataLoader(TensorDataset(x_tensor), batch_size=batch_size, shuffle=False, drop_last=False)
+    eval_loader = DataLoader(
+        TensorDataset(x_tensor), batch_size=batch_size, shuffle=False, drop_last=False,
+        num_workers=4, pin_memory=pin, prefetch_factor=2,
+    )
     with torch.no_grad():
         for (batch_x,) in eval_loader:
+            batch_x = batch_x.to(device).float().div_(255.0)
             out = model(batch_x)
-            all_preds.append(out.argmax(dim=1))
+            all_preds.append(out.argmax(dim=1).cpu())
     preds = torch.cat(all_preds).numpy()
     gt_arr = labels
     errors = [(i, preds[i], gt) for i, gt in enumerate(gt_arr) if preds[i] != gt]
@@ -370,13 +387,17 @@ def train_cnn(data_dir: str, model_output: str, epochs: int = 20, batch_size: in
         logger.info("全部正确，无错误图片")
         return
 
+    for sample_idx, pred, gt_label in errors:
+        logger.info("错误样本: %s  pred=%s true=%s",
+                    paths[sample_idx].name, LABELS[pred], LABELS[gt_label])
+
     cols = min(len(errors), 4)
     tile_h, tile_w = CHAR_SIZE[0] * 5, CHAR_SIZE[1] * 5
     rows = (len(errors) + cols - 1) // cols
     grid = np.zeros((rows * tile_h, cols * tile_w, 3), dtype=np.uint8) + 40
     for idx, (sample_idx, pred, gt_label) in enumerate(errors):
         r, c = idx // cols, idx % cols
-        img = (features[sample_idx].reshape(h, w) * 255).astype(np.uint8)
+        img = features[sample_idx].reshape(h, w)
         img_color = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
         resized = cv2.resize(img_color, (tile_w, tile_h))
         pred_label = LABELS[pred] if pred < len(LABELS) else "?"
@@ -489,7 +510,7 @@ if __name__ == "__main__":
     p_train = sub.add_parser("train", help="训练/导出模型")
     p_train.add_argument("--backend", choices=list(_TRAIN_BACKENDS.keys()), default="knn")
     p_train.add_argument("--epochs", type=int, default=20, help="CNN 训练轮数（仅对 CNN 后端有效）")
-    p_train.add_argument("--batch-size", type=int, default=64, help="CNN mini-batch 大小（仅对 CNN 后端有效）")
+    p_train.add_argument("--batch-size", type=int, default=256, help="CNN mini-batch 大小（仅对 CNN 后端有效）")
     p_train.add_argument("--data", default="data/")
     p_train.add_argument("--output", default=None, help="模型输出路径（默认根据 backend 自动选择）")
 
