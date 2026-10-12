@@ -1104,9 +1104,9 @@ async def _week_solve(self: Controller) -> str:
             moves = self._build_pocket_moves(result)
         else:
             moves = self._build_phased_moves(result)
-        delay = random.uniform(0, 5)
-        logger.info("week/solve: 随机延迟 %.1fs 后下发", delay)
-        await asyncio.sleep(delay)
+        # delay = random.uniform(0, 5)
+        # logger.info("week/solve: 随机延迟 %.1fs 后下发", delay)
+        # await asyncio.sleep(delay)
         await self._send_moves(moves)
     except Exception as e:
         logger.error("week/solve 失败: %s", e)

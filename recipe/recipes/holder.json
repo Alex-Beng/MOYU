@@ -8,11 +8,11 @@
     "scramble_delay": 90,
     "solve_delay": 90,
     "cross_delay": 120,
-    "f2l_delay": 110,
-    "oll_delay": 90,
+    "f2l_delay": 130,
+    "oll_delay": 110,
     "alll_delay": 70,
-    "oll_time": 300,
-    "alll_time":400,
+    "oll_time": 500,
+    "alll_time":1000,
     "rotation": "z",
     "ui": {
         "begin_holder": {
