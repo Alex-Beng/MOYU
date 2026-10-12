@@ -64,6 +64,10 @@ class Controller:
         self.cube_event_queue: asyncio.Queue = asyncio.Queue()
         self.move_queue: asyncio.Queue = asyncio.Queue()
 
+        # debug 图片异步落盘队列（避免磁盘写入阻塞事件循环）
+        self._debug_img_queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+        self._debug_dropped = 0
+
         self.screen_loop = ScreenLoop(ScrcpySource(self.scrcpy), self.recipe, self.ui_event_queue)
         self.cube_loop = CubeLoop(self.cube, self.cube_event_queue, self.move_queue)
 
@@ -139,6 +143,7 @@ class Controller:
             asyncio.create_task(self._state_machine(), name="state_machine"),
             asyncio.create_task(self.screen_loop.run(), name="screen_loop"),
             asyncio.create_task(self.cube_loop.run(), name="cube_loop"),
+            asyncio.create_task(self._debug_writer_loop(), name="debug_writer"),
         ]
         self._tasks = tasks
 
@@ -165,6 +170,27 @@ class Controller:
         finally:
             self.scrcpy.disconnect()
             await self.cube.close()
+
+    async def _debug_writer_loop(self):
+        """后台消费 debug 图片队列，在线程池中落盘，避免阻塞事件循环。"""
+        loop = asyncio.get_running_loop()
+        while True:
+            path, img = await self._debug_img_queue.get()
+            try:
+                await loop.run_in_executor(None, cv2.imwrite, str(path), img)
+            except Exception as e:
+                logger.warning("debug 图片写入失败 %s: %s", path, e)
+            finally:
+                self._debug_img_queue.task_done()
+
+    def _enqueue_debug_image(self, path: Path, img: np.ndarray):
+        """非阻塞入队一张 debug 图片；队列满则丢弃并计数。"""
+        try:
+            self._debug_img_queue.put_nowait((path, img))
+        except asyncio.QueueFull:
+            self._debug_dropped += 1
+            if self._debug_dropped % 100 == 1:
+                logger.warning("debug 图片队列已满，累计丢弃 %d 张", self._debug_dropped)
 
     # ------------------------------------------------------------------
     # 状态机
@@ -552,15 +578,16 @@ async def _rank_scramble(self: Controller) -> str:
             char_imgs = [c[0] for c in chars]
             labels = self.classifier.predict_batch(char_imgs)
 
-            # 保存每步所有字符区域到 debug/，便于后续重新打标训练
+            # 保存每步所有字符区域到 debug/，便于后续重新打标训练（异步落盘，不阻塞事件循环）
             ts = int(time.time())
-            for idx, (char_img, (cx, cy, r)) in enumerate(chars):
-                label = labels[idx]
-                if label == "EMPTY":
-                    continue
+            if any(labels[idx] != "EMPTY" for idx in range(len(chars))):
                 debug_dir = Path("debug") / "scramble"
                 debug_dir.mkdir(parents=True, exist_ok=True)
-                cv2.imwrite(str(debug_dir / f"{ts}_{idx}_{label}.png"), char_img)
+                for idx, (char_img, (cx, cy, r)) in enumerate(chars):
+                    label = labels[idx]
+                    if label == "EMPTY":
+                        continue
+                    self._enqueue_debug_image(debug_dir / f"{ts}_{idx}_{label}.png", char_img)
 
             moves = parse(labels)
             if moves and (self._last_move != moves or True):
