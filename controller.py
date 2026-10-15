@@ -41,12 +41,16 @@ DEBUG = False
 class Controller:
     """主控制器 —— 编排各独立任务"""
 
-    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None, recipe_path: str | None = None, telnet_port: int | None = None, web_port: int = 8080, max_solves: int = 0, proxy_mode: bool = False, bitrate: int | None = None, scrcpy_fps: int | None = None):
+    def __init__(self, classifier_config: dict | None = None, single_step: bool = False, initial_state: str | None = None, recipe_path: str | None = None, telnet_port: int | None = None, web_port: int = 8080, max_solves: int = 0, proxy_mode: bool = False, bitrate: int | None = None, scrcpy_fps: int | None = None, scrcpy_serial: str | None = None, adb_path: str = "adb", dont_solve: bool = False):
         self.recipe = RecipeLoader(recipe_path) if recipe_path else RecipeLoader()
         _recipe = self.recipe.recipe
         _bitrate = bitrate if bitrate is not None else _recipe.scrcpy_bitrate
         _fps = scrcpy_fps if scrcpy_fps is not None else _recipe.scrcpy_max_fps
+        self._serial = scrcpy_serial
+        self._adb_path = adb_path
+        self._dont_solve = dont_solve
         self.scrcpy = ScrcpyClient(
+            serial=scrcpy_serial,
             max_width=0,
             max_fps=_fps if _fps is not None else 10,
             bitrate=_bitrate if _bitrate is not None else 8_000_000,
@@ -222,7 +226,11 @@ class Controller:
                     await self._apply_delay()
                     if self._max_solves > 0 and prev_state == "solve" and self._solve_count >= self._max_solves:
                         logger.info("已完成 %d 次 solve，达到目标次数，锁屏退出", self._max_solves)
-                        subprocess.run(["adb", "shell", "input", "keyevent", "26"], capture_output=True)
+                        cmd = [self._adb_path]
+                        if self._serial:
+                            cmd += ["-s", self._serial]
+                        cmd += ["shell", "input", "keyevent", "26"]
+                        subprocess.run(cmd, capture_output=True)
                         for task in self._tasks:
                             if not task.done():
                                 task.cancel()
@@ -251,10 +259,26 @@ class Controller:
     # 工具方法
     # ------------------------------------------------------------------
 
+    def _maybe_truncate_tail(self, steps: list) -> list:
+        """dont-solve 开启时，从末尾随机截断 [1,10] 个转动步（至少保留 1 个）。"""
+        if not self._dont_solve or not isinstance(steps, list):
+            return steps
+        move_idx = [i for i, s in enumerate(steps)
+                    if isinstance(s, dict) and ("face" in s or "move" in s)]
+        if len(move_idx) <= 1:
+            return steps
+        n = random.randint(1, 10)
+        n = min(n, len(move_idx) - 1)
+        cut_at = move_idx[-n]
+        logger.info("dont-solve: 截断末尾 %d 个转动步 (共 %d)", n, len(move_idx))
+        return steps[:cut_at]
+
     async def _send_moves(self, moves):
         if self._proxy_mode:
             logger.debug("proxy 模式: 跳过自动下发，等待 BLE 输入")
             return
+        if self.state == "solve":
+            moves = self._maybe_truncate_tail(moves)
         await self.move_queue.put(moves)
 
     @staticmethod
@@ -292,38 +316,74 @@ class Controller:
                 return [{"move": t} for t in move_str.split() if t]
             return parse_move_notation(move_str)
 
+        scrap_prob = getattr(recipe, "scrap_prob", 0.0) or 0.0
+        scrap_pause = getattr(recipe, "scrap_pause", None)
+        predict_prob = getattr(recipe, "predict_prob", 0.0) or 0.0
+
+        def _predict():
+            """预判命中：跳过本次交界的 {"time"} 停顿（表现为直接连转）。"""
+            return predict_prob > 0 and random.random() < predict_prob
+
+        def _time(ms):
+            """阶段交界停顿：预判命中则不插 {"time"}，仅保留后续 {"delay"}。"""
+            if ms and not _predict():
+                steps.append({"time": ms})
+
+        def _scrap():
+            """净零废步：U 层来回拨 + 短停顿，净效果恒为 0，不破坏魔方状态。"""
+            if not scrap_prob or random.random() >= scrap_prob:
+                return
+            pairs = [("U", "U'"), ("U'", "U"), ("U2", "U2")]
+            a, b = random.choice(pairs)
+            steps.extend(_parse(a))
+            steps.extend(_parse(b))
+            if scrap_pause:
+                steps.append({"time": scrap_pause})
+
         if result.get("cross"):
-            if recipe.cross_time:
-                steps.append({"time": recipe.cross_time})
+            _time(recipe.cross_time)
             if recipe.cross_delay:
                 steps.append({"delay": recipe.cross_delay})
             steps.extend(_parse(result["cross"]))
 
-        if result.get("f2l"):
-            if recipe.f2l_time:
-                steps.append({"time": recipe.f2l_time})
+        # f2l 可能是列表（分组）或字符串
+        f2l_groups = result.get("f2l_groups") or result.get("f2l") or []
+        if isinstance(f2l_groups, str):
+            f2l_groups = [f2l_groups] if f2l_groups else []
+        f2l_groups = [g for g in f2l_groups if g]
+        if not f2l_groups:
+            f2l = result.get("f2l_str")
+            if f2l:
+                f2l_groups = [f2l]
+
+        if f2l_groups:
+            _scrap()  # cross → F2L 交界废步
+            _time(recipe.f2l_time)
             if recipe.f2l_delay:
                 steps.append({"delay": recipe.f2l_delay})
-            steps.extend(_parse(result["f2l"]))
+            pause = getattr(recipe, "f2l_pair_pause", None)
+            for gi, g in enumerate(f2l_groups):
+                # 组与组之间插入随机停顿（模拟观察下一组）；预判命中则跳过
+                if gi > 0 and pause:
+                    lo, hi = pause[0], pause[1]
+                    _time(random.randint(lo, hi) if hi > lo else lo)
+                steps.extend(_parse(g))
 
         if result.get("alll"):
-            if recipe.alll_time:
-                print("alll_time", recipe.alll_time)
-                steps.append({"time": recipe.alll_time})
+            _scrap()  # F2L → ALLL 交界废步
+            _time(recipe.alll_time)
             if recipe.alll_delay:
                 steps.append({"delay": recipe.alll_delay})
             steps.extend(_parse(result["alll"]))
         else:
             if result.get("oll"):
-                if recipe.oll_time:
-                    print("oll_time", recipe.oll_time)
-                    steps.append({"time": recipe.oll_time})
+                _scrap()  # F2L → OLL 交界废步
+                _time(recipe.oll_time)
                 if recipe.oll_delay:
                     steps.append({"delay": recipe.oll_delay})
                 steps.extend(_parse(result["oll"]))
             if result.get("pll"):
-                if recipe.pll_time:
-                    steps.append({"time": recipe.pll_time})
+                _time(recipe.pll_time)
                 if recipe.pll_delay:
                     steps.append({"delay": recipe.pll_delay})
                 steps.extend(_parse(result["pll"]))
@@ -340,6 +400,20 @@ class Controller:
                 return [{"move": t} for t in move_str.split() if t]
             return parse_move_notation(move_str)
 
+        scrap_prob = getattr(recipe, "scrap_prob", 0.0) or 0.0
+        scrap_pause = getattr(recipe, "scrap_pause", None)
+
+        def _scrap():
+            """净零废步（二阶同样限定净零，保证不破坏已还原状态）。"""
+            if not scrap_prob or random.random() >= scrap_prob:
+                return
+            pairs = [("U", "U'"), ("U'", "U"), ("U2", "U2")]
+            a, b = random.choice(pairs)
+            steps.extend(_parse(a))
+            steps.extend(_parse(b))
+            if scrap_pause:
+                steps.append({"time": scrap_pause})
+
         # cross = first_layer; oll = oll; pbl = alll
         if result.get("first_layer"):
             if recipe.cross_time:
@@ -349,6 +423,7 @@ class Controller:
             steps.extend(_parse(result["first_layer"]))
 
         if result.get("oll"):
+            _scrap()
             if recipe.oll_time:
                 print("oll_time", recipe.oll_time)
                 steps.append({"time": recipe.oll_time})
@@ -1367,6 +1442,10 @@ if __name__ == "__main__":
                         choices=["knn", "template", "cnn", "hog_svm"],
                         help="分类器后端")
     parser.add_argument("--host", default="192.168.50.246", help="ESP32 IP")
+    parser.add_argument("--port", type=int, default=80, metavar="PORT", help="cube HTTP 端口 (默认 80)")
+    parser.add_argument("--serial", default=None, help="scrcpy/adb 设备序列号 (默认自动选择唯一设备)")
+    parser.add_argument("--adb", default="adb", help="adb 可执行文件路径 (默认 PATH 中的 adb)")
+    parser.add_argument("--dont-solve", action="store_true", help="solve 下发时随机截断末尾 1-10 个转动步 (默认关闭)")
     parser.add_argument("--mock", action="store_true", help="Mock 测试")
     parser.add_argument("--single-step", action="store_true", help="逐步下发转动 (debug)")
     parser.add_argument("--state", default=None, help="指定初始状态 (覆盖 mode 默认值，如 scramble/solve/re_rank)")
@@ -1392,6 +1471,9 @@ if __name__ == "__main__":
             proxy_mode=args.proxy,
             bitrate=args.bitrate,
             scrcpy_fps=args.scrcpy_fps,
+            scrcpy_serial=args.serial,
+            adb_path=args.adb,
+            dont_solve=args.dont_solve,
         )
         if args.mock:
             from device.cube_api import MockCubeAPI
@@ -1400,7 +1482,7 @@ if __name__ == "__main__":
             controller.scrcpy = ScrcpyClient()
             logger.info("Mock 模式")
         else:
-            controller.cube = CubeAPI(host=args.host, single_step=args.single_step)
+            controller.cube = CubeAPI(host=args.host, port=args.port, single_step=args.single_step)
             controller.cube_loop.cube_api = controller.cube
         await controller.run()
 

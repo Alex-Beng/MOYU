@@ -82,14 +82,21 @@ def solve_cfop(facelets, debug=False, rotation=None, alll_prob=None):
     result = solver.solve(facelets, pre_rotation=rotation)
     if result is None:
         raise RuntimeError("No CFOP solution found")
+    f2l_groups = result.get('f2l_groups', result.get('f2l')) or []
+    if isinstance(f2l_groups, str):
+        f2l_groups = [f2l_groups] if f2l_groups else []
+    f2l_str = result.get('f2l_str') or ' '.join(g for g in f2l_groups if g)
     cross_n = len(result['cross'].split()) if result['cross'] else 0
-    f2l_n   = len(result['f2l'].split())   if result['f2l']   else 0
+    f2l_n   = len(f2l_str.split())         if f2l_str         else 0
     oll_n   = len(result['oll'].split())   if result['oll']   else 0
     pll_n   = len(result['pll'].split())   if result['pll']   else 0
     alll_n  = len(result['alll'].split())  if result['alll']  else 0
     total_n = cross_n + f2l_n + oll_n + pll_n + alll_n
     logger.info("  Cross (%d): %s", cross_n, result['cross'])
-    logger.info("  F2L   (%d): %s", f2l_n, result['f2l'])
+    logger.info("  F2L   (%d): %s", f2l_n, f2l_str)
+    for gi, g in enumerate(f2l_groups):
+        if g:
+            logger.info("    Pair %d (%d): %s", gi + 1, len(g.split()), g)
     logger.info("  OLL   (%d): %s", oll_n, result['oll'])
     logger.info("  PLL   (%d): %s", pll_n, result['pll'])
     logger.info("  ALLL  (%d): %s", alll_n, result['alll'])
@@ -97,7 +104,8 @@ def solve_cfop(facelets, debug=False, rotation=None, alll_prob=None):
     return {
         "solution": result['solution'],
         "cross": result['cross'],
-        "f2l": result['f2l'],
+        "f2l": f2l_groups,
+        "f2l_groups": f2l_groups,
         "oll": result['oll'],
         "pll": result['pll'],
         "alll": result['alll'],

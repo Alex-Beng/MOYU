@@ -294,17 +294,28 @@ if __name__ == "__main__":
 
     2. 真实设备测试：
         python -m device.cube_api 192.168.4.1
+        python -m device.cube_api 192.168.4.1 80
+        python -m device.cube_api 127.0.0.1 2026
     """
     import sys
     import asyncio
     logging.basicConfig(level=logging.INFO)
 
-    host = sys.argv[1] if len(sys.argv) > 1 else None
+    # 位置参数：[host] [port]；也可用 --port N
+    args = [a for a in sys.argv[1:]]
+    port = 80
+    if "--port" in args:
+        i = args.index("--port")
+        port = int(args[i + 1])
+        del args[i:i + 2]
+    host = args[0] if len(args) > 0 else None
+    if len(args) > 1:
+        port = int(args[1])
 
     async def _test():
         if host:
-            api = CubeAPI(host=host)
-            print(f"目标: http://{host}")
+            api = CubeAPI(host=host, port=port)
+            print(f"目标: http://{host}:{port}")
         else:
             api = MockCubeAPI()
             print("使用 MockCubeAPI")

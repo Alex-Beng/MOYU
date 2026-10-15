@@ -132,6 +132,10 @@ moyu/
 | `scramble_delay` / `solve_delay` | 进入对应阶段时设置 ESP32 转动延迟（ms） |
 | `cross/f2l/oll/pll/alll_delay` | 阶段前插入 `{"delay": ms}`（修改后续持续延迟） |
 | `cross/f2l/oll/pll/alll_time` | 阶段前插入 `{"time": ms}`（一次性等待） |
+| `f2l_pair_pause` | F2L 四组之间的随机停顿区间 `[min, max]` ms，模拟观察下一组（如 `[80, 200]`） |
+| `scrap_prob` | 阶段交界处插入净零废步的概率 0.0~1.0（模拟来回拨动找手感） |
+| `scrap_pause` | 废步后的短停顿 ms |
+| `predict_prob` | 预判连转概率 0.0~1.0：命中则跳过该交界 `{"time"}` 停顿，只保留 `{"delay"}`（模拟提前预判、直接连转） |
 | `alll_prob` | ALLL 尝试概率 0.0~1.0，默认 0.1 |
 | `rotation` | 面片坐标变换（x/x'/z/z'/z2） |
 | `move_format` | `"dir"` = face+dir 数字，`"str"` = 符号字符串 |
@@ -396,10 +400,33 @@ ALLL（概率性一步 LL，查 ~97k 条目哈希表）
   ↓（未命中则走 OLL + PLL）
 OLL（57 种算法）→ PLL（21 种算法）
   ↓
-输出: SolveResult { cross, f2l, oll?, pll?, alll?, solution }
+输出: SolveResult { cross, f2l(列表，每组一对), oll?, pll?, alll?, solution }
 ```
 
 ALLL 表由 OLL(57) + PLL(21) + EX_ALLLS(~6000) 算法 × 4 AUF × 4 post-AUF 展开构建，首次构建后序列化缓存，后续启动直接加载。
+
+### 类人化下发节奏（Python 版）
+
+下发时不再把整段解法一次性平铺，而是按人类习惯插入停顿与废步（均基于固件已有 `{"time"/"delay"/"move"}` 指令，无需改固件）：
+
+```
+Cross
+  ├─ [废步? cross→F2L]              scrap_prob 概率：U 层来回拨 + scrap_pause 短停顿
+  ├─ F2L 第 1 组
+  ├─ [随机停顿]                     f2l_pair_pause = [min, max] ms
+  ├─ F2L 第 2 组
+  ├─ [随机停顿]
+  ├─ F2L 第 3 组
+  ├─ [随机停顿]
+  ├─ F2L 第 4 组
+  ├─ [废步? F2L→OLL/ALL]
+  └─ OLL → PLL  或  ALLL
+```
+
+- **F2L 分组**：`solve()` 返回的 `f2l` 为列表，每项是一组 F2L pair 的转动串，据此在四组之间插入随机停顿。
+- **净零废步**：废步只用 `U U'` / `U' U` / `U2 U2` 等净效果为 0 的组合，不破坏魔方状态，也不影响后续阶段正确性。
+- **预判连转**：以 `predict_prob` 概率在阶段交界处跳过 `{"time"}` 停顿（保留 `{"delay"}`），表现为提前预判、不停顿直接连转。
+- 相关配置见 recipe 字段 `f2l_pair_pause` / `scrap_prob` / `scrap_pause` / `predict_prob`。
 
 ---
 

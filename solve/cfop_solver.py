@@ -1238,6 +1238,7 @@ def _solve_f2l_single(state: 'CubieCube', pair_prun, pair_move, solved_pair=None
     """Original F2L solver using single-move IDA* with macro fallback on timeout."""
     import time
     full_moves = []
+    groups = []
     solved_pairs = set()
     if solved_pair is not None:
         solved_pairs.add(solved_pair)
@@ -1270,6 +1271,7 @@ def _solve_f2l_single(state: 'CubieCube', pair_prun, pair_move, solved_pair=None
             
             if path is not None:
                 full_moves.extend(path)
+                groups.append(path)
                 for m in path:
                     state.apply_move_idx(m)
                 _dbg(f"DEBUG: pair {pair_idx} solved with {len(path)} moves ({elapsed:.3f}s)")
@@ -1284,6 +1286,7 @@ def _solve_f2l_single(state: 'CubieCube', pair_prun, pair_move, solved_pair=None
                     macro_path = solve_f2l_pair_macro(state, pair_idx, MACRO_PAIR_PRUN, max_depth=8, protected_pairs=solved_pairs)
                     if macro_path is not None:
                         full_moves.extend(macro_path)
+                        groups.append(macro_path)
                         for m in macro_path:
                             state.apply_move_idx(m)
                         _dbg(f"DEBUG: pair {pair_idx} solved with macro ({len(macro_path)} moves)")
@@ -1296,6 +1299,7 @@ def _solve_f2l_single(state: 'CubieCube', pair_prun, pair_move, solved_pair=None
                     path = solve_f2l_pair(state, pair_idx, pair_prun, pair_move, max_depth=11, protected_pairs=solved_pairs)
                     if path is not None:
                         full_moves.extend(path)
+                        groups.append(path)
                         for m in path:
                             state.apply_move_idx(m)
                         _dbg(f"DEBUG: pair {pair_idx} solved with extended search ({len(path)} moves)")
@@ -1315,7 +1319,7 @@ def _solve_f2l_single(state: 'CubieCube', pair_prun, pair_move, solved_pair=None
     if top_corners != {0, 1, 2, 3} or top_edges != {0, 1, 2, 3}:
         return None
 
-    return full_moves, state
+    return full_moves, groups, state
 
 
 def _solve_f2l_macro(state, solved_pair=None):
@@ -1326,6 +1330,7 @@ def _solve_f2l_macro(state, solved_pair=None):
         return _solve_f2l_single(state, PAIR_PRUN, PAIR_MOVE, solved_pair)
 
     full_moves = []
+    groups = []
     solved_pairs = set()
     if solved_pair is not None:
         solved_pairs.add(solved_pair)
@@ -1343,6 +1348,7 @@ def _solve_f2l_macro(state, solved_pair=None):
             _dbg(f"DEBUG: F2L pair {pair_idx} FAILED (macro mode)")
             return None
         full_moves.extend(moves)
+        groups.append(moves)
         for m in moves:
             state.apply_move_idx(m)
         _dbg(f"DEBUG: pair {pair_idx} solved with {len(moves)} moves (macro mode)")
@@ -1356,7 +1362,7 @@ def _solve_f2l_macro(state, solved_pair=None):
     if top_corners != {0, 1, 2, 3} or top_edges != {0, 1, 2, 3}:
         return None
 
-    return full_moves, state
+    return full_moves, groups, state
 
 
 OLL_RECOGNITION = None
@@ -1698,7 +1704,9 @@ class CFOPSolver:
             solution = pre_rotation if pre_rotation else ''
             return {
                 'cross': '',
-                'f2l': '',
+                'f2l': [],
+                'f2l_groups': [],
+                'f2l_str': '',
                 'oll': None,
                 'pll': None,
                 'alll': None,
@@ -1732,8 +1740,9 @@ class CFOPSolver:
         if f2l_result is None:
             _dbg("DEBUG: f2l failed")
             return None
-        f2l_moves, state = f2l_result
-        f2l_str = moves_to_str(f2l_moves)
+        f2l_moves, f2l_move_groups, state = f2l_result
+        f2l_groups = [moves_to_str(g) for g in f2l_move_groups]
+        f2l_str = ' '.join(g for g in f2l_groups if g)
         _dbg(f"DEBUG: f2l = {f2l_str}")
 
         alll_str = ''
@@ -1797,7 +1806,27 @@ class CFOPSolver:
                 basic, _ = convert_alg_to_basic(s)
                 return basic.strip()
             cross_str  = _to_basic(pre_rotation + ' ' + cross_str  if cross_str  else pre_rotation)
-            f2l_str    = _to_basic(pre_rotation + ' ' + f2l_str    if f2l_str    else '')
+            if f2l_groups:
+                # 逐组对每个转动做面映射（保持组边界与长度，不跨组合并）。
+                # 语义等价于原始「整段 + pre_rotation」的 convert_alg_to_basic，
+                # 但保留了每组边界供下游插入组间停顿。
+                rot_axis, rot_count = _parse_rotation(pre_rotation)
+
+                def _rot_group(g):
+                    out = []
+                    for t in g.split():
+                        f = t[0]
+                        mod = t[1:]
+                        if f in 'URFDLB':
+                            for _ in range(rot_count):
+                                f = apply_rotation(f, rot_axis)
+                        out.append(f + mod)
+                    return ' '.join(out)
+
+                f2l_groups = [_rot_group(g) if g else g for g in f2l_groups]
+                f2l_str = ' '.join(g for g in f2l_groups if g)
+            else:
+                f2l_str = ''
             oll_str    = _to_basic(pre_rotation + ' ' + oll_str    if oll_str    else '') if oll_str    else None
             pll_str    = _to_basic(pre_rotation + ' ' + pll_str    if pll_str    else '') if pll_str    else None
             alll_str   = _to_basic(pre_rotation + ' ' + alll_str   if alll_str   else '') if alll_str   else None
@@ -1818,7 +1847,9 @@ class CFOPSolver:
 
         result = {
             'cross': cross_str,
-            'f2l': f2l_str,
+            'f2l': f2l_groups,
+            'f2l_groups': f2l_groups,
+            'f2l_str': f2l_str,
             'solution': solution,
         }
         if alll_found:
@@ -1890,7 +1921,7 @@ def main():
         print("No solution found")
         sys.exit(1)
     print(f"Cross: {result['cross']}")
-    print(f"F2L: {result['f2l']}")
+    print(f"F2L: {result.get('f2l_str', ' '.join(result['f2l']))}")
     alll_hit = result.get('alll') is not None
     if not alll_hit:
         print(f"OLL: {result['oll']}")

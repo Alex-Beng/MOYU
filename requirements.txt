@@ -1,0 +1,10 @@
+scrcpy-client @ git+https://github.com/Alex-Beng/py-scrcpy-client.git@feat/scrcpy-server-v4
+av>=12,<13
+adbutils>=2,<3
+retry
+numpy>=2
+opencv-python<5.0.0
+aiohttp
+loguru
+pillow
+onnxruntime

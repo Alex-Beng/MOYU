@@ -10,6 +10,10 @@
     "cross_delay": 0,
     "f2l_delay": 0,
     "oll_delay": 0,
+    "f2l_pair_pause": [80, 200],
+    "scrap_prob": 0.15,
+    "scrap_pause": 120,
+    "predict_prob": 0.25,
     "ui": {
         "begin_rank": {
             "template": "../../templates/begin_rank.png",

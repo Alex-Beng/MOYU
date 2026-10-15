@@ -13,19 +13,17 @@
     "alll_delay": 70,
     "oll_time": 700,
     "alll_time":1000,
+    "f2l_pair_pause": [80, 200],
+    "scrap_prob": 0.15,
+    "scrap_pause": 120,
+    "predict_prob": 0.10,
     "rotation": "z",
     "ui": {
         "begin_rank": {
-            "template": "../../templates/begin_rank_new.png",
+            "template": "../../templates/begin_rank.png",
             "roi": null,
             "threshold": 0.85,
             "desc": "开始排位按钮"
-        },
-        "end_rank": {
-            "template": "../../templates/end_rank.png",
-            "roi": null,
-            "threshold": 0.80,
-            "desc": "结算确认按钮"
         },
         "re_rank": {
             "template": "../../templates/re_rank.png",
