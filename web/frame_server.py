@@ -79,7 +79,7 @@ body { background:#000; font-family:monospace; }
     <div class="ctrl-row">
       <select id="state-select">
         <option>init</option><option>scramble</option><option>solve</option>
-        <option>re_rank</option><option>re_holder</option><option>re_team</option><option>re_week</option>
+        <option>re_rank</option><option>re_holder</option><option>re_team</option><option>re_act</option><option>re_week</option>
       </select>
       <button id="state-set">跳转</button>
     </div>

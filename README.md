@@ -44,7 +44,8 @@ MOYU 是基于硬件模拟智能魔方，意图实现人类摸鱼（MOYU），�
 | **semi** | `scramble` ↔ `solve` |
 | **rank** | `init` → `scramble` → `solve` → `re_rank` → `scramble` |
 | **holder** | `init` → `scramble` → `solve` → `re_holder` → `init` |
-| **team** | `init` → `scramble` → `solve` → `re_team` → `scramble` |
+| **team** | `init` → `scramble` → `solve` → `re_team`（连点）→ `init` |
+| **act** | `init` → `scramble` → `solve` → `re_act`（连点）→ `init` |
 | **week** | `init` → `scramble` → `solve` → `re_week` → `init` |
 | **solo** | `init` → `scramble` → `solve` → `re_solo` → `init` |
 | **remote** | `scramble` → `solve`（循环等待下一把打乱） |

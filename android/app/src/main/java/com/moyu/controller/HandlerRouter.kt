@@ -25,6 +25,12 @@ fun getHandlers(mode: String): Map<String, StateHandler> = when (mode) {
         "solve" to ::teamSolve,
         "re_team" to ::teamReTeam,
     )
+    "act" -> mapOf(
+        "init" to ::actInit,
+        "scramble" to ::rankScramble,
+        "solve" to ::actSolve,
+        "re_act" to ::actReAct,
+    )
     "week" -> mapOf(
         "init" to ::weekInit,
         "scramble" to ::rankScramble,

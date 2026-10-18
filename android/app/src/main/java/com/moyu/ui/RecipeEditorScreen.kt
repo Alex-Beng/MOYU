@@ -244,7 +244,7 @@ fun RecipeEditorScreen(onSnackbar: (String) -> Unit = {}) {
 
         Row(Modifier.fillMaxWidth()) {
             var modeExpanded by remember { mutableStateOf(false) }
-            val modes = listOf("rank", "semi", "holder", "team", "week", "remote")
+            val modes = listOf("rank", "semi", "holder", "team", "act", "week", "remote")
             ExposedDropdownMenuBox(expanded = modeExpanded, onExpandedChange = { modeExpanded = it }, modifier = Modifier.weight(1f)) {
                 OutlinedTextField(
                     value = mode, onValueChange = {}, readOnly = true,

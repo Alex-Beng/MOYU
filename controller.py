@@ -14,6 +14,7 @@
 """
 import asyncio
 import logging
+import os
 import random
 import subprocess
 import time
@@ -87,6 +88,7 @@ class Controller:
         self._max_solves = max_solves
         self._solve_count = 0
         self._tasks = None
+        self._shutdown_requested = False
         self._state_version = 0
         self._init_state()
         if initial_state is not None:
@@ -101,6 +103,8 @@ class Controller:
         elif self.mode == "holder":
             self.state = "init"
         elif self.mode == "team":
+            self.state = "init"
+        elif self.mode == "act":
             self.state = "init"
         elif self.mode == "week":
             self.state = "init"
@@ -170,8 +174,13 @@ class Controller:
         logger.info("所有任务已启动")
         self._running = True
         try:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            gather_task = asyncio.gather(*tasks, return_exceptions=True)
+            await gather_task
         finally:
+            if not gather_task.done():
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
             self.scrcpy.disconnect()
             await self.cube.close()
 
@@ -226,14 +235,23 @@ class Controller:
                     await self._apply_delay()
                     if self._max_solves > 0 and prev_state == "solve" and self._solve_count >= self._max_solves:
                         logger.info("已完成 %d 次 solve，达到目标次数，锁屏退出", self._max_solves)
-                        cmd = [self._adb_path]
-                        if self._serial:
-                            cmd += ["-s", self._serial]
-                        cmd += ["shell", "input", "keyevent", "26"]
-                        subprocess.run(cmd, capture_output=True)
-                        for task in self._tasks:
-                            if not task.done():
-                                task.cancel()
+                        try:
+                            cmd = [self._adb_path]
+                            if self._serial:
+                                cmd += ["-s", self._serial]
+                            cmd += ["shell", "input", "keyevent", "26"]
+                            subprocess.run(cmd, capture_output=True, timeout=5)
+                        except Exception as e:
+                            logger.warning("锁屏 keyevent 失败（忽略）: %s", e)
+                        self._shutdown_requested = True
+                        current = asyncio.current_task()
+                        pending = [t for t in self._tasks if t is not current and not t.done()]
+                        for task in pending:
+                            task.cancel()
+                        if pending:
+                            _, still = await asyncio.wait(pending, timeout=8)
+                            if still:
+                                logger.warning("锁屏退出：任务收敛超时，强制结束 (%d 个未收敛)", len(still))
                         return
             else:
                 logger.warning("未知状态: %s (mode=%s)", self.state, self.mode)
@@ -1028,16 +1046,37 @@ async def _holder_re_holder(self: Controller) -> str:
 # ======================================================================
 
 async def _team_init(self: Controller) -> str:
-    """检测并点击 begin_team 按钮进入战队赛。"""
-    logger.info("team/init: 等待 begin_team...")
+    """等待 begin_team 进入战队赛；期间兜底清理 continue_team / re_team。"""
+    logger.info("team/init: 等待 begin_team（同时兜底清理 continue_team / re_team）...")
     self._scramble_seen_move = False
     self._no_scramble_cnt = 0
-    ok, _, _ = await self._wait_for_ui("begin_team", timeout=10.0)
-    if ok:
-        await self._click_feature("begin_team")
-        await asyncio.sleep(2.0)
-        self._scramble_move_history = []
-        return "scramble"
+    elapsed = 0.0
+    while elapsed < 10.0:
+        frame = self.scrcpy.last_frame
+        if frame is not None:
+            matched, center = self.detector.detect(frame, "begin_team")
+            if matched and center:
+                logger.info("team/init: 检测到 begin_team，点击")
+                self.scrcpy.tap(*center)
+                await asyncio.sleep(2.0)
+                self._scramble_move_history = []
+                return "scramble"
+            matched, center = self.detector.detect(frame, "continue_team")
+            if matched and center:
+                logger.info("team/init: 检测到 continue_team，点击")
+                self.scrcpy.tap(*center)
+                await asyncio.sleep(0.5)
+                elapsed += 0.5
+                continue
+            matched, center = self.detector.detect(frame, "re_team")
+            if matched and center:
+                logger.info("team/init: 检测到 re_team，点击")
+                self.scrcpy.tap(*center)
+                await asyncio.sleep(0.5)
+                elapsed += 0.5
+                continue
+        await asyncio.sleep(0.5)
+        elapsed += 0.5
     return "init"
 
 async def _team_scramble(self: Controller) -> str:
@@ -1075,17 +1114,13 @@ async def _team_solve(self: Controller) -> str:
 
         matched_end, center_end = self.detector.detect(frame, "continue_team")
         if matched_end and center_end:
-            logger.info("team/solve: 检测到 continue_team，点击")
-            self.scrcpy.tap(*center_end)
-            await asyncio.sleep(2.0)
+            logger.info("team/solve: 检测到 continue_team，交给 re_team 状态连点")
             return "re_team"
-        
+
         matched_end, center_end = self.detector.detect(frame, "re_team")
         if matched_end and center_end:
-            logger.info("team/solve: 检测到 re_team ，点击")
-            self.scrcpy.tap(*center_end)
-            await asyncio.sleep(2.0)
-            return "init"
+            logger.info("team/solve: 检测到 re_team，交给 re_team 状态连点")
+            return "re_team"
 
         feat = self.recipe.recipe.feature("scramble_area")
         if feat and feat.roi:
@@ -1120,8 +1155,8 @@ async def _team_solve(self: Controller) -> str:
     return "solve"
 
 async def _team_re_team(self: Controller) -> str:
-    """持续点击 re_team 直到模板匹配失败，再返回 init。"""
-    logger.info("team/re_team: 持续点击 re_team 直到消失...")
+    """连点 continue_team / re_team 直到两者都消失，再返回 init。"""
+    logger.info("team/re_team: 连点 continue_team / re_team 直到消失...")
     self._scramble_seen_move = False
     self._no_scramble_cnt = 0
     while True:
@@ -1129,13 +1164,163 @@ async def _team_re_team(self: Controller) -> str:
         if frame is None:
             await asyncio.sleep(0.2)
             continue
+        matched, center = self.detector.detect(frame, "continue_team")
+        if matched and center:
+            logger.info("team/re_team: 检测到 continue_team，点击")
+            self.scrcpy.tap(*center)
+            await asyncio.sleep(0.5)
+            continue
         matched, center = self.detector.detect(frame, "re_team")
-        if not matched:
-            logger.info("team/re_team: re_team 消失，跳转 init")
-            self._scramble_move_history = []
-            return "init"
-        await self._click_feature("re_team")
+        if matched and center:
+            logger.info("team/re_team: 检测到 re_team，点击")
+            self.scrcpy.tap(*center)
+            await asyncio.sleep(0.5)
+            continue
+        logger.info("team/re_team: continue_team / re_team 均消失，跳转 init")
+        self._scramble_move_history = []
+        return "init"
+#endregion
+
+#region act
+# ======================================================================
+# Act 模式：活动赛（流程与 team 完全一致）
+#   init(begin_act) → scramble → solve → re_act → init
+# ======================================================================
+
+async def _act_init(self: Controller) -> str:
+    """等待 begin_act 进入活动赛；期间兜底清理 continue_act / re_act。"""
+    logger.info("act/init: 等待 begin_act（同时兜底清理 continue_act / re_act）...")
+    self._scramble_seen_move = False
+    self._no_scramble_cnt = 0
+    elapsed = 0.0
+    while elapsed < 10.0:
+        frame = self.scrcpy.last_frame
+        if frame is not None:
+            matched, center = self.detector.detect(frame, "begin_act")
+            if matched and center:
+                logger.info("act/init: 检测到 begin_act，点击")
+                self.scrcpy.tap(*center)
+                await asyncio.sleep(2.0)
+                self._scramble_move_history = []
+                return "scramble"
+            matched, center = self.detector.detect(frame, "continue_act")
+            if matched and center:
+                logger.info("act/init: 检测到 continue_act，点击")
+                self.scrcpy.tap(*center)
+                await asyncio.sleep(0.5)
+                elapsed += 0.5
+                continue
+            matched, center = self.detector.detect(frame, "re_act")
+            if matched and center:
+                logger.info("act/init: 检测到 re_act，点击")
+                self.scrcpy.tap(*center)
+                await asyncio.sleep(0.5)
+                elapsed += 0.5
+                continue
         await asyncio.sleep(0.5)
+        elapsed += 0.5
+    return "init"
+
+async def _act_scramble(self: Controller) -> str:
+    """与 rank scramble 逻辑相同：持续检测气泡 → 识别 → 下发 → 等待气泡消失。"""
+    return await _rank_scramble(self)
+
+async def _act_solve(self: Controller) -> str:
+    """获取面片 → 求解 → 下发转动 → 等待 continue_act / re_act。"""
+    logger.info("act/solve: 求解...")
+    facelets = await self.cube.get_facelets()
+    if not facelets or len(facelets) != 54:
+        await asyncio.sleep(1.0)
+        return "solve"
+
+    try:
+        result = await self._do_solve(facelets)
+        solution = result["solution"]
+        logger.info("act/solve: %s (%d步)", solution, len(solution.split()))
+        if self.recipe.recipe.cube == "pocket":
+            await self._send_moves(self._build_pocket_moves(result))
+        else:
+            await self._send_moves(self._build_phased_moves(result))
+    except Exception as e:
+        logger.error("act/solve 失败: %s", e)
+
+    self._scramble_move_history = []
+    logger.info("act/solve: 同时检测 scramble 和 continue_act 和 re_act...")
+    elapsed = 0.0
+    while elapsed < 180.0:
+        frame = self.scrcpy.last_frame
+        if frame is None:
+            await asyncio.sleep(0.5)
+            elapsed += 0.5
+            continue
+
+        matched_end, center_end = self.detector.detect(frame, "continue_act")
+        if matched_end and center_end:
+            logger.info("act/solve: 检测到 continue_act，交给 re_act 状态连点")
+            return "re_act"
+
+        matched_end, center_end = self.detector.detect(frame, "re_act")
+        if matched_end and center_end:
+            logger.info("act/solve: 检测到 re_act，交给 re_act 状态连点")
+            return "re_act"
+
+        feat = self.recipe.recipe.feature("scramble_area")
+        if feat and feat.roi:
+            x, y, w, h = feat.roi
+            crop = frame[y:y+h, x:x+w]
+        else:
+            mid = frame.shape[0] // 2
+            crop = frame[mid:, :]
+        chars = segment(crop)
+        if chars:
+            logger.debug("act/solve: 检测到 %d 个字符区域", len(chars))
+            if self.classifier:
+                char_imgs = [c[0] for c in chars]
+                labels = self.classifier.predict_batch(char_imgs)
+                moves = parse(labels)
+                if moves:
+                    _dup = False
+                    for n in range(2, len(moves) + 1):
+                        if len(self._scramble_move_history) >= n and self._scramble_move_history[-n:] == moves:
+                            _dup = True
+                            break
+                    if _dup:
+                        logger.debug(f"act/solve: {moves} vs {self._scramble_move_history} 跳过")
+                        await asyncio.sleep(0.5)
+                        elapsed += 0.5
+                        continue
+                    self._scramble_seen_move = True
+                    logger.info("act/solve: 检测到新打乱，回到 scramble")
+                    return "scramble"
+        await asyncio.sleep(0.5)
+        elapsed += 0.5
+    return "solve"
+
+async def _act_re_act(self: Controller) -> str:
+    """连点 continue_act / re_act 直到两者都消失，再返回 init。"""
+    logger.info("act/re_act: 连点 continue_act / re_act 直到消失...")
+    self._scramble_seen_move = False
+    self._no_scramble_cnt = 0
+    while True:
+        frame = self.scrcpy.last_frame
+        if frame is None:
+            await asyncio.sleep(0.2)
+            continue
+        matched, center = self.detector.detect(frame, "continue_act")
+        if matched and center:
+            logger.info("act/re_act: 检测到 continue_act，点击")
+            self.scrcpy.tap(*center)
+            await asyncio.sleep(0.5)
+            continue
+        matched, center = self.detector.detect(frame, "re_act")
+        if matched and center:
+            logger.info("act/re_act: 检测到 re_act，点击")
+            self.scrcpy.tap(*center)
+            await asyncio.sleep(0.5)
+            continue
+        logger.info("act/re_act: continue_act / re_act 均消失，跳转 init")
+        self._scramble_move_history = []
+        return "init"
 #endregion
 
 #region week
@@ -1384,6 +1569,13 @@ def _get_handlers(mode: str) -> dict[str, any]:
             "solve": _team_solve,
             "re_team": _team_re_team,
         }
+    if mode == "act":
+        return {
+            "init": _act_init,
+            "scramble": _act_scramble,
+            "solve": _act_solve,
+            "re_act": _act_re_act,
+        }
     if mode == "week":
         return {
             "init": _week_init,
@@ -1485,5 +1677,8 @@ if __name__ == "__main__":
             controller.cube = CubeAPI(host=args.host, port=args.port, single_step=args.single_step)
             controller.cube_loop.cube_api = controller.cube
         await controller.run()
+        if controller._shutdown_requested:
+            logger.info("已请求退出，直接结束进程")
+            os._exit(0)
 
     asyncio.run(main())

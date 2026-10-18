@@ -53,7 +53,7 @@ python test_pocket_advanced.py                                                  
 ```
 
 ### 配置文件
-- Recipe 配置：`recipe/recipes/*.json` —— 控制模式（rank/semi/holder/team/week/remote/solo/proxy）、延迟、UI 模板、分类器
+- Recipe 配置：`recipe/recipes/*.json` —— 控制模式（rank/semi/holder/team/act/week/remote/solo/proxy）、延迟、UI 模板、分类器
 - 默认 Recipe：`recipe/recipes/example.json`
 - 分类器后端：`knn`（`.pkl`）、`template`（目录）、`cnn`（`.onnx`）、`hog_svm`（`.pkl`）
 

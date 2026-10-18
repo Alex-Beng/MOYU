@@ -5,6 +5,24 @@ import com.moyu.ocr.BubbleSegmentor
 import com.moyu.ocr.MoveParser
 import kotlinx.coroutines.delay
 
+private fun hasScrambleBubbles(ctrl: Controller, frame: Bitmap): Boolean {
+    val feature = ctrl.recipe.feature("scramble_area")
+    val crop = if (feature != null && feature.roi != null) {
+        val r = feature.roi
+        Bitmap.createBitmap(frame, r.x, r.y, r.w, r.h)
+    } else frame
+    return try {
+        val bubbles = BubbleSegmentor.segment(crop)
+        val hasBubbles = bubbles.isNotEmpty()
+        bubbles.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
+        hasBubbles
+    } catch (_: Exception) {
+        false
+    } finally {
+        if (crop !== frame) crop.recycle()
+    }
+}
+
 suspend fun rankInit(ctrl: Controller): String? {
     ctrl.scrambleSeenMove = false
     ctrl.noScrambleCnt = 0
@@ -231,32 +249,123 @@ suspend fun holderReHolder(ctrl: Controller): String? {
 }
 
 suspend fun teamInit(ctrl: Controller): String? {
-    ctrl.log("team/init")
-    ctrl.waitForUi("begin_team", 30_000L)?.let {
-        ctrl.clickFeature("begin_team")
-        delay(2000)
+    ctrl.log("team/init: 等待 begin_team（同时兜底清理 continue_team / re_team）")
+    ctrl.scrambleSeenMove = false
+    ctrl.noScrambleCnt = 0
+    val start = System.currentTimeMillis()
+    while (System.currentTimeMillis() - start < 10_000L) {
+        if (ctrl.clickFeature("begin_team")) {
+            delay(2000)
+            return "scramble"
+        }
+        if (ctrl.clickFeature("continue_team")) continue
+        if (ctrl.clickFeature("re_team")) continue
+        delay(500)
     }
-    return "scramble"
+    return "init"
 }
 
 suspend fun teamSolve(ctrl: Controller): String? {
     ctrl.log("team/solve")
     val facelets = ctrl.getFacelets()
+    if (facelets.length != 54) { delay(1000); return "solve" }
     val result = ctrl.solver.solve(facelets, ctrl.recipe.rotation) ?: return "solve"
     ctrl.queueCommands(ctrl.buildPhasedMoves(result))
-    ctrl.waitForUi("continue_team", 120_000L)?.let {
-        ctrl.clickFeature("continue_team")
-        delay(2000)
-        return "scramble"
+    ctrl.scrambleSeenMove = false
+    ctrl.noScrambleCnt = 0
+    ctrl.log("team/solve: 同时检测 scramble 和 continue_team / re_team...")
+    val start = System.currentTimeMillis()
+    while (System.currentTimeMillis() - start < 180_000L) {
+        val action = ctrl.useFrame { frame ->
+            val endName = ctrl.detector.detectAny(frame, listOf("continue_team", "re_team")).first
+            if (endName != null) endName
+            else if (hasScrambleBubbles(ctrl, frame)) "scramble" else null
+        }
+        when (action) {
+            "continue_team", "re_team" -> {
+                ctrl.log("team/solve: 检测到 $action，交给 re_team 状态连点")
+                return "re_team"
+            }
+            "scramble" -> {
+                ctrl.log("team/solve: 检测到新打乱，回到 scramble")
+                return "scramble"
+            }
+        }
+        delay(500)
     }
     return "solve"
 }
 
 suspend fun teamReTeam(ctrl: Controller): String? {
-    ctrl.log("team/re_team")
-    ctrl.clickFeature("continue_team")
-    delay(2000)
-    return "scramble"
+    ctrl.log("team/re_team: 连点 continue_team / re_team 直到消失...")
+    ctrl.scrambleSeenMove = false
+    ctrl.noScrambleCnt = 0
+    while (true) {
+        if (ctrl.clickFeature("continue_team")) continue
+        if (ctrl.clickFeature("re_team")) continue
+        ctrl.log("team/re_team: continue_team / re_team 均消失，跳转 init")
+        return "init"
+    }
+}
+
+suspend fun actInit(ctrl: Controller): String? {
+    ctrl.log("act/init: 等待 begin_act（同时兜底清理 continue_act / re_act）")
+    ctrl.scrambleSeenMove = false
+    ctrl.noScrambleCnt = 0
+    val start = System.currentTimeMillis()
+    while (System.currentTimeMillis() - start < 10_000L) {
+        if (ctrl.clickFeature("begin_act")) {
+            delay(2000)
+            return "scramble"
+        }
+        if (ctrl.clickFeature("continue_act")) continue
+        if (ctrl.clickFeature("re_act")) continue
+        delay(500)
+    }
+    return "init"
+}
+
+suspend fun actSolve(ctrl: Controller): String? {
+    ctrl.log("act/solve")
+    val facelets = ctrl.getFacelets()
+    if (facelets.length != 54) { delay(1000); return "solve" }
+    val result = ctrl.solver.solve(facelets, ctrl.recipe.rotation) ?: return "solve"
+    ctrl.queueCommands(ctrl.buildPhasedMoves(result))
+    ctrl.scrambleSeenMove = false
+    ctrl.noScrambleCnt = 0
+    ctrl.log("act/solve: 同时检测 scramble 和 continue_act / re_act...")
+    val start = System.currentTimeMillis()
+    while (System.currentTimeMillis() - start < 180_000L) {
+        val action = ctrl.useFrame { frame ->
+            val endName = ctrl.detector.detectAny(frame, listOf("continue_act", "re_act")).first
+            if (endName != null) endName
+            else if (hasScrambleBubbles(ctrl, frame)) "scramble" else null
+        }
+        when (action) {
+            "continue_act", "re_act" -> {
+                ctrl.log("act/solve: 检测到 $action，交给 re_act 状态连点")
+                return "re_act"
+            }
+            "scramble" -> {
+                ctrl.log("act/solve: 检测到新打乱，回到 scramble")
+                return "scramble"
+            }
+        }
+        delay(500)
+    }
+    return "solve"
+}
+
+suspend fun actReAct(ctrl: Controller): String? {
+    ctrl.log("act/re_act: 连点 continue_act / re_act 直到消失...")
+    ctrl.scrambleSeenMove = false
+    ctrl.noScrambleCnt = 0
+    while (true) {
+        if (ctrl.clickFeature("continue_act")) continue
+        if (ctrl.clickFeature("re_act")) continue
+        ctrl.log("act/re_act: continue_act / re_act 均消失，跳转 init")
+        return "init"
+    }
 }
 
 suspend fun weekInit(ctrl: Controller): String? {

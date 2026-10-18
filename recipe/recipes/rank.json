@@ -17,6 +17,7 @@
     "scrap_prob": 0.15,
     "scrap_pause": 120,
     "predict_prob": 0.10,
+    "alll_prob": 0.2,
     "rotation": "z",
     "ui": {
         "begin_rank": {
