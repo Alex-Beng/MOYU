@@ -86,6 +86,7 @@ class Recipe:
     scrap_prob: float = 0.0                  # 阶段交界插入净零废步的概率 0.0~1.0
     scrap_pause: int | None = None           # 废步后的短停顿 ms
     predict_prob: float = 0.0                # 预判连转概率：命中则跳过该交界 {"time"} 停顿，只保留 {"delay"}
+    double_gap_ms: int | None = None         # 180° 两次 90° 之间的短停顿 ms（模拟连拨，None=不拆分）
     rotation: str | None = None
     alll_prob: float = 0.2
     move_format: str = "dir"  # "dir" = face/dir, "str" = move string
@@ -112,6 +113,7 @@ class Recipe:
             scrap_prob=d.get("scrap_prob", 0.0),
             scrap_pause=d.get("scrap_pause"),
             predict_prob=d.get("predict_prob", 0.0),
+            double_gap_ms=d.get("double_gap_ms"),
             move_format=d.get("move_format", "dir"),
             alll_prob=d.get("alll_prob", 0.2),
             scrcpy_bitrate=d.get("scrcpy_bitrate"),

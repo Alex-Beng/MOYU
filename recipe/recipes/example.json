@@ -14,6 +14,7 @@
     "scrap_prob": 0.15,
     "scrap_pause": 120,
     "predict_prob": 0.25,
+    "double_gap_ms": 40,
     "ui": {
         "begin_rank": {
             "template": "../../templates/begin_rank.png",

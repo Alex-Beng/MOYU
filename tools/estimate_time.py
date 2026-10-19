@@ -154,6 +154,8 @@ def build_phased_with_phase(controller_inst, result: dict, recipe: Recipe) -> li
     scrap_prob = getattr(recipe, "scrap_prob", 0.0) or 0.0
     scrap_pause = getattr(recipe, "scrap_pause", None)
     predict_prob = getattr(recipe, "predict_prob", 0.0) or 0.0
+    double_gap = getattr(recipe, "double_gap_ms", None)
+    cur_delay = [getattr(recipe, "solve_delay", None)]
 
     def _predict():
         return predict_prob > 0 and random.random() < predict_prob
@@ -161,6 +163,34 @@ def build_phased_with_phase(controller_inst, result: dict, recipe: Recipe) -> li
     def _time(ms):
         if ms and not _predict():
             steps.append({"time": ms, "_phase": "pause"})
+
+    def _delay(ms):
+        if ms:
+            steps.append({"delay": ms, "_phase": phase["cur"]})
+            cur_delay[0] = ms
+
+    def _emit(move_str):
+        """与 controller 一致：double_gap_ms 配置时把 180° 拆成两个 90°，
+        中间插 {"delay": double_gap}，之后再恢复原持续 delay。"""
+        parsed = _parse(move_str)
+        if not double_gap:
+            steps.extend(_tag(parsed))
+            return
+        for st in parsed:
+            is_double = (st.get("dir") == 2) or (
+                recipe.move_format == "str" and st.get("move", "").endswith("2"))
+            if not is_double:
+                steps.append(dict(st, _phase=phase["cur"]) if "_phase" not in st else st)
+                continue
+            if "face" in st:
+                half = {"face": st["face"], "dir": 0}
+            else:
+                half = {"move": st["move"].rstrip("2")}
+            steps.append(dict(half, _phase=phase["cur"]))
+            steps.append({"delay": double_gap, "_phase": phase["cur"]})
+            steps.append(dict(half, _phase=phase["cur"]))
+            if cur_delay[0] is not None:
+                steps.append({"delay": cur_delay[0], "_phase": phase["cur"]})
 
     def _scrap():
         """与 controller._build_phased_moves 一致：走 _parse 生成 face/dir。"""
@@ -178,9 +208,8 @@ def build_phased_with_phase(controller_inst, result: dict, recipe: Recipe) -> li
     phase["cur"] = "cross"
     if result.get("cross"):
         _time(recipe.cross_time)
-        if recipe.cross_delay:
-            steps.append({"delay": recipe.cross_delay, "_phase": "cross"})
-        steps.extend(_tag(_parse(result["cross"])))
+        _delay(recipe.cross_delay)
+        _emit(result["cross"])
 
     f2l_groups = result.get("f2l_groups") or result.get("f2l") or []
     if isinstance(f2l_groups, str):
@@ -191,36 +220,32 @@ def build_phased_with_phase(controller_inst, result: dict, recipe: Recipe) -> li
     if f2l_groups:
         _scrap()
         _time(recipe.f2l_time)
-        if recipe.f2l_delay:
-            steps.append({"delay": recipe.f2l_delay, "_phase": "f2l"})
+        _delay(recipe.f2l_delay)
         pause = getattr(recipe, "f2l_pair_pause", None)
         for gi, g in enumerate(f2l_groups):
             if gi > 0 and pause:
                 lo, hi = pause[0], pause[1]
                 _time(random.randint(lo, hi) if hi > lo else lo)
-            steps.extend(_tag(_parse(g)))
+            _emit(g)
 
     if result.get("alll"):
         phase["cur"] = "alll"
         _scrap()
         _time(recipe.alll_time)
-        if recipe.alll_delay:
-            steps.append({"delay": recipe.alll_delay, "_phase": "alll"})
-        steps.extend(_tag(_parse(result["alll"])))
+        _delay(recipe.alll_delay)
+        _emit(result["alll"])
     else:
         if result.get("oll"):
             phase["cur"] = "oll"
             _scrap()
             _time(recipe.oll_time)
-            if recipe.oll_delay:
-                steps.append({"delay": recipe.oll_delay, "_phase": "oll"})
-            steps.extend(_tag(_parse(result["oll"])))
+            _delay(recipe.oll_delay)
+            _emit(result["oll"])
         if result.get("pll"):
             phase["cur"] = "pll"
             _time(recipe.pll_time)
-            if recipe.pll_delay:
-                steps.append({"delay": recipe.pll_delay, "_phase": "pll"})
-            steps.extend(_tag(_parse(result["pll"])))
+            _delay(recipe.pll_delay)
+            _emit(result["pll"])
 
     return steps
 

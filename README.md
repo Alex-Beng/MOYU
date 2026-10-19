@@ -137,6 +137,7 @@ moyu/
 | `scrap_prob` | 阶段交界处插入净零废步的概率 0.0~1.0（模拟来回拨动找手感） |
 | `scrap_pause` | 废步后的短停顿 ms |
 | `predict_prob` | 预判连转概率 0.0~1.0：命中则跳过该交界 `{"time"}` 停顿，只保留 `{"delay"}`（模拟提前预判、直接连转） |
+| `double_gap_ms` | 180° 转动内部两次 90° 之间的短停顿 ms（模拟连拨；不配则不拆分，由固件默认间隔） |
 | `alll_prob` | ALLL 尝试概率 0.0~1.0，默认 0.1 |
 | `rotation` | 面片坐标变换（x/x'/z/z'/z2） |
 | `move_format` | `"dir"` = face+dir 数字，`"str"` = 符号字符串 |
@@ -427,7 +428,16 @@ Cross
 - **F2L 分组**：`solve()` 返回的 `f2l` 为列表，每项是一组 F2L pair 的转动串，据此在四组之间插入随机停顿。
 - **净零废步**：废步只用 `U U'` / `U' U` / `U2 U2` 等净效果为 0 的组合，不破坏魔方状态，也不影响后续阶段正确性。
 - **预判连转**：以 `predict_prob` 概率在阶段交界处跳过 `{"time"}` 停顿（保留 `{"delay"}`），表现为提前预判、不停顿直接连转。
-- 相关配置见 recipe 字段 `f2l_pair_pause` / `scrap_prob` / `scrap_pause` / `predict_prob`。
+- **连拨**：配置 `double_gap_ms` 时，180° 转动在下发前拆成两个 90°，中间插入 `{"delay": double_gap_ms}`，之后恢复原阶段 delay，模拟人类"一气呵成"的连拨。
+- 相关配置见 recipe 字段 `f2l_pair_pause` / `scrap_prob` / `scrap_pause` / `predict_prob` / `double_gap_ms`。
+
+### 耗时预估
+
+```bash
+python -m tools.estimate_time --recipe rank.json --n 2000
+```
+
+蒙特卡洛估算单次复原的固件下发耗时：随机 25 步 WCA 旧式打乱 → CFOP 求解 → 复用 `_build_phased_moves` 生成实机等价指令 → 按 `gan-cube-emu` 固件时序（90°=delay、180°=2×delay、`{"time"}` 十进制取整、`{"delay"}` 仅更新）累加 → 输出均值/中位/P90/P99 与各阶段占比。
 
 ---
 

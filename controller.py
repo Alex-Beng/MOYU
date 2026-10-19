@@ -337,6 +337,40 @@ class Controller:
         scrap_prob = getattr(recipe, "scrap_prob", 0.0) or 0.0
         scrap_pause = getattr(recipe, "scrap_pause", None)
         predict_prob = getattr(recipe, "predict_prob", 0.0) or 0.0
+        double_gap = getattr(recipe, "double_gap_ms", None)
+        # 当前生效的持续 delay（用于 180° 拆分后恢复）；solve 开始时已设为 solve_delay
+        cur_delay = [getattr(recipe, "solve_delay", None)]
+
+        def _emit(move_str):
+            """下发一段转动；double_gap_ms 配置时把 180° 拆成两个 90°，
+            中间插 {"delay": double_gap}，之后再恢复原持续 delay。"""
+            parsed = _parse(move_str)
+            if not double_gap:
+                steps.extend(parsed)
+                return
+            for st in parsed:
+                is_double = (st.get("dir") == 2) or (
+                    recipe.move_format == "str" and st.get("move", "").endswith("2"))
+                if not is_double:
+                    steps.append(st)
+                    continue
+                if "face" in st:
+                    face, dbl_move = st["face"], None
+                else:
+                    face, dbl_move = None, st["move"]
+                if face is not None:
+                    half = {"face": face, "dir": 0}
+                else:
+                    half = {"move": dbl_move.rstrip("2")}
+                # 第一个 90°
+                steps.append(dict(half))
+                # 中间短停顿
+                steps.append({"delay": double_gap})
+                # 第二个 90°（180° = 两次 90°）
+                steps.append(dict(half))
+                # 恢复原持续 delay
+                if cur_delay[0] is not None:
+                    steps.append({"delay": cur_delay[0]})
 
         def _predict():
             """预判命中：跳过本次交界的 {"time"} 停顿（表现为直接连转）。"""
@@ -346,6 +380,12 @@ class Controller:
             """阶段交界停顿：预判命中则不插 {"time"}，仅保留后续 {"delay"}。"""
             if ms and not _predict():
                 steps.append({"time": ms})
+
+        def _delay(ms):
+            """设置持续 delay（并记录当前值，供 180° 拆分后恢复）。"""
+            if ms:
+                steps.append({"delay": ms})
+                cur_delay[0] = ms
 
         def _scrap():
             """净零废步：U 层来回拨 + 短停顿，净效果恒为 0，不破坏魔方状态。"""
@@ -360,9 +400,8 @@ class Controller:
 
         if result.get("cross"):
             _time(recipe.cross_time)
-            if recipe.cross_delay:
-                steps.append({"delay": recipe.cross_delay})
-            steps.extend(_parse(result["cross"]))
+            _delay(recipe.cross_delay)
+            _emit(result["cross"])
 
         # f2l 可能是列表（分组）或字符串
         f2l_groups = result.get("f2l_groups") or result.get("f2l") or []
@@ -377,34 +416,30 @@ class Controller:
         if f2l_groups:
             _scrap()  # cross → F2L 交界废步
             _time(recipe.f2l_time)
-            if recipe.f2l_delay:
-                steps.append({"delay": recipe.f2l_delay})
+            _delay(recipe.f2l_delay)
             pause = getattr(recipe, "f2l_pair_pause", None)
             for gi, g in enumerate(f2l_groups):
                 # 组与组之间插入随机停顿（模拟观察下一组）；预判命中则跳过
                 if gi > 0 and pause:
                     lo, hi = pause[0], pause[1]
                     _time(random.randint(lo, hi) if hi > lo else lo)
-                steps.extend(_parse(g))
+                _emit(g)
 
         if result.get("alll"):
             _scrap()  # F2L → ALLL 交界废步
             _time(recipe.alll_time)
-            if recipe.alll_delay:
-                steps.append({"delay": recipe.alll_delay})
-            steps.extend(_parse(result["alll"]))
+            _delay(recipe.alll_delay)
+            _emit(result["alll"])
         else:
             if result.get("oll"):
                 _scrap()  # F2L → OLL 交界废步
                 _time(recipe.oll_time)
-                if recipe.oll_delay:
-                    steps.append({"delay": recipe.oll_delay})
-                steps.extend(_parse(result["oll"]))
+                _delay(recipe.oll_delay)
+                _emit(result["oll"])
             if result.get("pll"):
                 _time(recipe.pll_time)
-                if recipe.pll_delay:
-                    steps.append({"delay": recipe.pll_delay})
-                steps.extend(_parse(result["pll"]))
+                _delay(recipe.pll_delay)
+                _emit(result["pll"])
 
         return steps
 
